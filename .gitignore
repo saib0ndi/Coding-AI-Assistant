@@ -1,0 +1,15 @@
+# Node
+node_modules
+dist
+*.log
+# Python
+.venv
+__pycache__/
+# Build artifacts
+*.tsbuildinfo
+# VSCode
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+# Env
+.env

@@ -1,0 +1,11 @@
+**/.vscode/**
+**/.git/**
+
+src/**
+node_modules/**
+!dist/**
+
+.vscodeignore
+tsconfig.json
+README.md
+CHANGELOG.md

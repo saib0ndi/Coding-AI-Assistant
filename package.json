@@ -1,0 +1,12 @@
+{
+  "name": "coding-ai-assistant-monorepo",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:orchestrator": "pnpm -C packages/orchestrator dev",
+    "build:ext": "pnpm -C packages/vscode-ext build"
+  }
+}

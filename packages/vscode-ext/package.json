@@ -1,0 +1,50 @@
+{
+  "name": "coding-ai-assistant",
+  "displayName": "Coding AI Assistant",
+  "publisher": "saibondi",
+  "version": "0.0.3",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onCommand:aiassist.open",
+    "onCommand:aiassist.setToken",
+    "onCommand:aiassist.proposeEdit"
+  ],
+  "main": "./dist/extension/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiassist.open",
+        "title": "AI Assist: Open Panel"
+      },
+      {
+        "command": "aiassist.setToken",
+        "title": "AI Assist: Set API Token (secure)"
+      },
+      {
+        "command": "aiassist.proposeEdit",
+        "title": "AI Assist: Propose Next Edit"
+      }
+    ],
+    "configuration": {
+      "title": "Coding AI Assistant",
+      "properties": {
+        "codingAiAssistant.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8787",
+          "description": "Orchestrator base URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "tsc -w"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.2"
+  }
+}
