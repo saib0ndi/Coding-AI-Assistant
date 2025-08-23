@@ -1,11 +1,50 @@
 {
   "version": "0.2.0",
-  "configurations": [{
-    "name": "Run Extension",
-    "type": "extensionHost",
-    "request": "launch",
-    "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-ext"],
-    "outFiles": ["${workspaceFolder}/packages/vscode-ext/dist/**/*.js"],
-    "preLaunchTask": "Build Extension"
-  }]
+  "configurations": [
+    {
+      // Python MCP server
+      "name": "MCP: Debug (Python)",
+      "type": "debugpy",                    // modern Python debugger
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/mcp-servers/aiassist_mcp/server.py",
+      "cwd": "${workspaceFolder}/tools/mcp-servers/aiassist_mcp",
+      "python": "${workspaceFolder}/tools/mcp-servers/.venv/bin/python",
+      "env": {
+        "AIASSIST_MCP_TOKEN": "secret",
+        "AIASSIST_MCP_VERSION": "1.1.0",
+        "PORT": "10000",
+        "AIASSIST_ALLOWED_ORIGINS": "http://127.0.0.1:8787"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "preLaunchTask": "MCP: Kill (10000)",
+      "postDebugTask": "MCP: Kill (10000)"
+    },
+    {
+      // Node orchestrator
+      "name": "Orchestrator: Debug (Node)",
+      "type": "node",                       // modern Node debug type
+      "request": "launch",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "${workspaceFolder}/packages/orchestrator",
+      "env": {
+        "PORT": "8787",
+        "MCP_URL": "http://127.0.0.1:10000",
+        "AIASSIST_MCP_TOKEN": "secret",
+        "OLLAMA_BASE_URL": "http://127.0.0.1:11434"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "Orchestrator: Kill (8787)",
+      "postDebugTask": "Orchestrator: Kill (8787)"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug: Both (MCP + Orchestrator)",
+      "configurations": ["MCP: Debug (Python)", "Orchestrator: Debug (Node)"],
+      "stopAll": true
+    }
+  ]
 }

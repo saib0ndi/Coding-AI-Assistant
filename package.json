@@ -8,5 +8,15 @@
   "scripts": {
     "dev:orchestrator": "pnpm -C packages/orchestrator dev",
     "build:ext": "pnpm -C packages/vscode-ext build"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^20.19.11",
+    "@types/vscode": "1.85.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
   }
 }

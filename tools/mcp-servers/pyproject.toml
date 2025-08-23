@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiassist_mcp"
+version = "1.1.0"
+description = "MCP server for Coding-AI-Assistant"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.111",
+  "uvicorn>=0.30",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aiassist_mcp*"]

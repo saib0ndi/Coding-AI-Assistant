@@ -1,15 +1,15 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "lib": ["ES2022", "DOM"],
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
+    "target": "ES2015",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
     "skipLibCheck": true,
-    "types": ["node", "vscode"],
-    "typeRoots": ["./node_modules/@types"]
+    "types": ["node", "@types/express-serve-static-core", "@types/cors"]
   },
-  "include": ["src"]
+  "include": ["src/**/*"]
 }

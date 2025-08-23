@@ -1,0 +1,53 @@
+{
+  "name": "mcp-ollama-server-enhanced",
+  "version": "2.0.0",
+  "description": "Enhanced MCP server with auto error fixing capabilities using Ollama",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-ollama-enhanced": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "dev:client": "tsx src/dev/mcp-client.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test": "jest",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ollama",
+    "ai",
+    "code-completion",
+    "error-fixing",
+    "debugging",
+    "language-server"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "dotenv": "^17.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "tsx": "^4.20.4",
+    "typescript": "^5.5.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

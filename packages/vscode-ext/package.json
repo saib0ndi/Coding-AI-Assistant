@@ -7,11 +7,11 @@
     "vscode": "^1.85.0"
   },
   "activationEvents": [
-    "onCommand:aiassist.open",
+    "onCommand:aiassist.setToken",
     "onCommand:aiassist.setToken",
     "onCommand:aiassist.proposeEdit"
   ],
-  "main": "./dist/extension/extension.js",
+  "main": "dist/extension/index.js",
   "contributes": {
     "commands": [
       {
@@ -39,12 +39,26 @@
     }
   },
   "scripts": {
-    "build": "tsc -p .",
-    "dev": "tsc -w"
+    "build": "pnpm compile",
+    "dev": "tsc -w",
+    "compile": "tsc -p .",
+    "package": "vsce package --no-yarn --out dist"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.9.2"
-  }
+  },
+  "files": [
+    "dist/**",
+    "images/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/your/repo.git"
+  },
+  "license": "MIT"
 }
