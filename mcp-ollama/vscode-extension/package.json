@@ -1,0 +1,96 @@
+{
+  "name": "mcp-ollama-assistant",
+  "displayName": "MCP Ollama AI Assistant",
+  "description": "AI-powered code completion and error fixing with MCP-Ollama server",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": ["Other", "Machine Learning", "Debuggers"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mcpOllama.fixError",
+        "title": "Fix Error with AI",
+        "category": "MCP Ollama"
+      },
+      {
+        "command": "mcpOllama.explainCode",
+        "title": "Explain Code",
+        "category": "MCP Ollama"
+      },
+      {
+        "command": "mcpOllama.refactorCode",
+        "title": "Suggest Refactoring",
+        "category": "MCP Ollama"
+      },
+      {
+        "command": "mcpOllama.diagnoseCode",
+        "title": "Diagnose Code Issues",
+        "category": "MCP Ollama"
+      },
+      {
+        "command": "mcpOllama.generateCode",
+        "title": "Generate Code from Description",
+        "category": "MCP Ollama"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mcpOllama.fixError",
+          "when": "editorHasSelection",
+          "group": "mcpOllama@1"
+        },
+        {
+          "command": "mcpOllama.explainCode",
+          "when": "editorHasSelection",
+          "group": "mcpOllama@2"
+        },
+        {
+          "command": "mcpOllama.refactorCode",
+          "when": "editorHasSelection",
+          "group": "mcpOllama@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MCP Ollama",
+      "properties": {
+        "mcpOllama.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3002",
+          "description": "MCP-Ollama server URL"
+        },
+        "mcpOllama.autoFix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic error fixing"
+        },
+        "mcpOllama.showDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show real-time diagnostics"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "@types/node-fetch": "^2.6.2"
+  }
+}

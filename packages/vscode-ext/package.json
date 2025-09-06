@@ -32,7 +32,7 @@
       "properties": {
         "codingAiAssistant.serverUrl": {
           "type": "string",
-          "default": "http://localhost:8787",
+          "default": "http://localhost:3002",
           "description": "Orchestrator base URL"
         }
       }

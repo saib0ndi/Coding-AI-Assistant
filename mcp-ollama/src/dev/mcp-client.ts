@@ -39,6 +39,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[CLIENT] Fatal:", err);
+  const sanitizedError = err instanceof Error ? err.message.replace(/[\r\n]/g, ' ') : 'Unknown error';
+  console.error("[CLIENT] Fatal:", sanitizedError);
   process.exit(1);
 });
+

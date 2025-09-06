@@ -79,7 +79,7 @@ CONFIGURATION FILES
          "command": "node",
          "args": ["/home/saibondi/Documents/Coding-AI-Assistant/mcp-ollama/dist/index.js"],
          "env": {
-           "OLLAMA_HOST": "http://localhost:11434",
+           "OLLAMA_HOST": "http://10.10.110.25:11434",
            "OLLAMA_MODEL": "codellama:7b-instruct"
          }
        }
@@ -87,7 +87,7 @@ CONFIGURATION FILES
    }
 
 2. Environment Variables:
-   OLLAMA_HOST=http://localhost:11434
+   OLLAMA_HOST=http://10.10.110.25:11434
    OLLAMA_MODEL=codellama:7b-instruct
 
 ISSUES FIXED DURING SETUP

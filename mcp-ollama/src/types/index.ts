@@ -153,7 +153,16 @@ export interface ErrorFixResponse {
     processingTime: number;
     confidence: number;
     alternativeFixesCount: number;
-    errorAnalysisDetails: ErrorAnalysis | null;
+    errorAnalysisDetails: {
+      type: ErrorType;
+      category: string;
+      severity: string;
+      cause: string;
+      affectedComponents: string[];
+      suggestedApproach: string;
+      complexity: string;
+      confidence: number;
+    } | null;
   };
 }
 
@@ -178,10 +187,22 @@ export interface ErrorPattern {
   solutions: string[];
 }
 
+export interface ErrorHistoryItem {
+  type: string;
+  timestamp: number;
+  message?: string;
+  severity?: string;
+  resolved?: boolean;
+}
+
 export interface PatternAnalysisResult {
-  commonPatterns: any[];
-  statistics: any;
-  trends: any;
+  commonPatterns: Array<{ type: string; count: number }>;
+  statistics: {
+    total: number;
+    byType: Array<{ type: string; count: number }>;
+    averagePerDay: number;
+  };
+  trends: Array<{ trend: string; description: string }>;
   preventiveRecommendations: string[];
 }
 

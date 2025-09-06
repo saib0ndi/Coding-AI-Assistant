@@ -4,6 +4,7 @@
     "ms-python.debugpy",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
-    "humao.rest-client"
+    "humao.rest-client",
+    "undefined_publisher.mcp-ollama-assistant"
   ]
 }

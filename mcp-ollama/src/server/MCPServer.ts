@@ -10,7 +10,7 @@ import { OllamaProvider } from '../providers/OllamaProvider.js';
 import { ContextManager } from '../utils/ContextManager.js';
 import { CacheManager } from '../utils/CacheManager.js';
 import { Logger } from '../utils/Logger.js';
-import { ErrorAnalyzer } from '../utils/ErrorAnallyzer.js';
+import { ErrorAnalyzer } from '../utils/ErrorAnalyzer.js';
 import {
   MCPTool,
   MCPResource,
@@ -31,484 +31,425 @@ export class MCPServer {
   private readonly cacheManager: CacheManager;
   private readonly logger: Logger;
   private readonly errorAnalyzer: ErrorAnalyzer;
-  private readonly tools: Map<string, MCPTool> = new Map();
-  private readonly resources: Map<string, MCPResource> = new Map();
+  private readonly tools = new Map<string, MCPTool>();
+  private readonly resources = new Map<string, MCPResource>();
   private readonly config: OllamaConfig;
+  private static readonly DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'codellama:7b-instruct';
+  private transport?: StdioServerTransport;
+  private isRunning = false;
 
   constructor(ollamaConfig: OllamaConfig) {
-    this.config = ollamaConfig;
-    this.server = new Server(
-      { name: 'mcp-ollama-server', version: '2.0.0' },
-      { capabilities: { tools: {}, resources: {} } }
-    );
+    try {
+      this.config = ollamaConfig;
+      this.server = new Server(
+        { name: 'mcp-ollama-server', version: '2.0.0' },
+        { capabilities: { tools: {}, resources: {} } }
+      );
 
-    this.ollamaProvider = new OllamaProvider(ollamaConfig);
-    this.contextManager = new ContextManager();
-    this.cacheManager = new CacheManager();
-    this.logger = new Logger();
-    this.errorAnalyzer = new ErrorAnalyzer();
+      this.logger = new Logger();
+      this.ollamaProvider = new OllamaProvider(ollamaConfig);
+      this.contextManager = new ContextManager();
+      this.cacheManager = new CacheManager();
+      this.errorAnalyzer = new ErrorAnalyzer();
+      
+      this.initializeServer();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to initialize MCPServer: ${errorMessage}`);
+    }
+  }
 
+  private initializeServer(): void {
     this.setupTools();
     this.setupResources();
     this.setupHandlers();
   }
 
   private setupTools(): void {
-    this.setupExistingTools();
-    this.setupErrorFixingTools();
+    const allTools = [
+      ...this.createCoreTools(),
+      ...this.createErrorFixingTools(),
+      ...this.createAnalysisTools()
+    ];
+    
+    allTools.forEach(tool => this.tools.set(tool.name, tool));
   }
 
-  private setupErrorFixingTools(): void {
-    this.setupAutoErrorFixTool();
-    this.setupDiagnosticTools();
-    this.setupBatchAndPatternTools();
-    this.setupValidationTools();
+  private createCoreTools(): MCPTool[] {
+    return [
+      this.createCodeCompletionTool(),
+      this.createCodeGenerationTool(),
+      this.createCodeExplanationTool()
+    ];
   }
 
-  private setupAutoErrorFixTool(): void {
-    this.tools.set('auto_error_fix', {
-      name: 'auto_error_fix',
-      description: 'Automatically fix errors by analyzing error messages and code context',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          errorMessage: { 
-            type: 'string', 
-            description: 'The complete error message (compile-time, runtime, or linting error)' 
-          },
-          code: { 
-            type: 'string', 
-            description: 'The code that produced the error' 
-          },
-          language: { 
-            type: 'string', 
-            description: 'Programming language' 
-          },
-          filePath: { 
-            type: 'string', 
-            description: 'Path to the file with the error (optional)' 
-          },
-          lineNumber: { 
-            type: 'number', 
-            description: 'Line number where error occurs (optional)' 
-          },
-          stackTrace: { 
-            type: 'string', 
-            description: 'Full stack trace if available (optional)' 
-          },
-          context: {
+  private createErrorFixingTools(): MCPTool[] {
+    return [
+      this.createAutoErrorFixTool(),
+      this.createQuickFixTool(),
+      this.createBatchErrorFixTool(),
+      this.createValidationTool()
+    ];
+  }
+
+  private createAnalysisTools(): MCPTool[] {
+    return [
+      this.createCodeAnalysisTool(),
+      this.createDiagnosticTool(),
+      this.createContextAnalysisTool(),
+      this.createRefactoringTool(),
+      this.createErrorPatternAnalysisTool()
+    ];
+  }
+
+  private createAutoErrorFixTool(): MCPTool {
+    return this.createTool('auto_error_fix', 
+      'Automatically fix errors by analyzing error messages and code context',
+      {
+        errorMessage: { type: 'string', description: 'The complete error message' },
+        code: { type: 'string', description: 'The code that produced the error' },
+        language: { type: 'string', description: 'Programming language' },
+        filePath: { type: 'string', description: 'Path to the file with the error (optional)' },
+        lineNumber: { type: 'number', description: 'Line number where error occurs (optional)' },
+        stackTrace: { type: 'string', description: 'Full stack trace if available (optional)' },
+        context: {
+          type: 'object',
+          properties: {
+            projectPath: { type: 'string' },
+            dependencies: { type: 'array', items: { type: 'string' } },
+            framework: { type: 'string' },
+            buildTool: { type: 'string' }
+          }
+        }
+      },
+      ['errorMessage', 'code', 'language'],
+      this.handleAutoErrorFix.bind(this)
+    );
+  }
+
+  private createDiagnosticTool(): MCPTool {
+    return this.createTool('diagnose_code',
+      'Perform real-time error detection and diagnostics on code',
+      {
+        code: { type: 'string', description: 'Code to diagnose' },
+        language: { type: 'string', description: 'Programming language' },
+        filePath: { type: 'string', description: 'File path for context' },
+        checkTypes: {
+          type: 'array',
+          items: { type: 'string', enum: ['syntax', 'semantic', 'style', 'security', 'performance', 'all'] },
+          description: 'Types of checks to perform',
+          default: ['all']
+        }
+      },
+      ['code', 'language'],
+      this.handleDiagnoseCode.bind(this)
+    );
+  }
+
+  private createQuickFixTool(): MCPTool {
+    return this.createTool('quick_fix',
+      'Generate quick fix suggestions for specific code issues',
+      {
+        code: { type: 'string', description: 'Code with the issue' },
+        language: { type: 'string', description: 'Programming language' },
+        issueType: {
+          type: 'string',
+          enum: ['syntax_error', 'type_error', 'import_error', 'undefined_variable', 'missing_dependency', 'deprecated_api', 'security_issue', 'performance_issue'],
+          description: 'Type of issue to fix'
+        },
+        issueDescription: { type: 'string', description: 'Description of the issue' },
+        lineNumber: { type: 'number', description: 'Line number with the issue' },
+        severity: { type: 'string', enum: ['error', 'warning', 'info', 'hint'], description: 'Severity of the issue', default: 'error' }
+      },
+      ['code', 'language', 'issueType', 'issueDescription'],
+      this.handleQuickFix.bind(this)
+    );
+  }
+
+  private createBatchErrorFixTool(): MCPTool {
+    return this.createTool('batch_error_fix',
+      'Fix multiple errors in a codebase at once',
+      {
+        errors: {
+          type: 'array',
+          items: {
             type: 'object',
             properties: {
-              projectPath: { type: 'string' },
-              dependencies: { type: 'array', items: { type: 'string' } },
-              framework: { type: 'string' },
-              buildTool: { type: 'string' }
+              errorMessage: { type: 'string' },
+              filePath: { type: 'string' },
+              lineNumber: { type: 'number' },
+              code: { type: 'string' },
+              language: { type: 'string' }
             },
-            description: 'Additional project context'
+            required: ['errorMessage', 'code', 'language']
           }
         },
-        required: ['errorMessage', 'code', 'language']
+        prioritizeBy: { type: 'string', enum: ['severity', 'frequency', 'dependencies', 'complexity'], default: 'severity' }
       },
-      handler: this.handleAutoErrorFix.bind(this)
-    });
+      ['errors'],
+      this.handleBatchErrorFix.bind(this)
+    );
   }
 
-  private setupDiagnosticTools(): void {
-    this.tools.set('diagnose_code', {
-      name: 'diagnose_code',
-      description: 'Perform real-time error detection and diagnostics on code',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'Code to diagnose' },
-          language: { type: 'string', description: 'Programming language' },
-          filePath: { type: 'string', description: 'File path for context' },
-          checkTypes: {
-            type: 'array',
-            items: { 
-              type: 'string', 
-              enum: ['syntax', 'semantic', 'style', 'security', 'performance', 'all'] 
-            },
-            description: 'Types of checks to perform',
-            default: ['all']
-          }
-        },
-        required: ['code', 'language']
-      },
-      handler: this.handleDiagnoseCode.bind(this)
-    });
-
-    this.tools.set('quick_fix', {
-      name: 'quick_fix',
-      description: 'Generate quick fix suggestions for specific code issues',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'Code with the issue' },
-          language: { type: 'string', description: 'Programming language' },
-          issueType: {
-            type: 'string',
-            enum: [
-              'syntax_error', 'type_error', 'import_error', 'undefined_variable', 
-              'missing_dependency', 'deprecated_api', 'security_issue', 'performance_issue'
-            ],
-            description: 'Type of issue to fix'
-          },
-          issueDescription: { type: 'string', description: 'Description of the issue' },
-          lineNumber: { type: 'number', description: 'Line number with the issue' },
-          severity: { 
-            type: 'string', 
-            enum: ['error', 'warning', 'info', 'hint'], 
-            description: 'Severity of the issue', 
-            default: 'error' 
-          }
-        },
-        required: ['code', 'language', 'issueType', 'issueDescription']
-      },
-      handler: this.handleQuickFix.bind(this)
-    });
-  }
-
-  private setupBatchAndPatternTools(): void {
-    this.tools.set('batch_error_fix', {
-      name: 'batch_error_fix',
-      description: 'Fix multiple errors in a codebase at once',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          errors: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                errorMessage: { type: 'string' },
-                filePath: { type: 'string' },
-                lineNumber: { type: 'number' },
-                code: { type: 'string' },
-                language: { type: 'string' }
-              },
-              required: ['errorMessage', 'code', 'language']
-            },
-            description: 'Array of errors to fix'
-          },
-          prioritizeBy: { 
-            type: 'string', 
-            enum: ['severity', 'frequency', 'dependencies', 'complexity'], 
-            description: 'How to prioritize fixes', 
-            default: 'severity' 
-          }
-        },
-        required: ['errors']
-      },
-      handler: this.handleBatchErrorFix.bind(this)
-    });
-
-    this.tools.set('error_pattern_analysis', {
-      name: 'error_pattern_analysis',
-      description: 'Analyze error patterns and suggest preventive measures',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          errorHistory: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                errorMessage: { type: 'string' },
-                timestamp: { type: 'string' },
-                filePath: { type: 'string' },
-                language: { type: 'string' },
-                fixed: { type: 'boolean' }
-              }
-            },
-            description: 'Historical error data'
-          },
-          analysisDepth: { 
-            type: 'string', 
-            enum: ['basic', 'detailed', 'comprehensive'], 
-            description: 'Depth of pattern analysis', 
-            default: 'detailed' 
-          }
-        },
-        required: ['errorHistory']
-      },
-      handler: this.handleErrorPatternAnalysis.bind(this)
-    });
-  }
-
-  private setupValidationTools(): void {
-    this.tools.set('validate_fix', {
-      name: 'validate_fix',
-      description: 'Validate that a proposed fix actually resolves the issue',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          originalCode: { type: 'string', description: 'Original code with error' },
-          fixedCode: { type: 'string', description: 'Code after applying fix' },
-          language: { type: 'string', description: 'Programming language' },
-          originalError: { type: 'string', description: 'Original error message' },
-          testCases: { 
-            type: 'array', 
-            items: { type: 'string' }, 
-            description: 'Test cases to validate against (optional)' 
-          }
-        },
-        required: ['originalCode', 'fixedCode', 'language', 'originalError']
-      },
-      handler: this.handleValidateFix.bind(this)
-    });
-  }
-
-  private setupExistingTools(): void {
-    this.setupCodeCompletionTool();
-    this.setupCodeAnalysisTool();
-    this.setupRemainingExistingTools();
-  }
-
-  private setupCodeCompletionTool(): void {
-    this.tools.set('code_completion', {
-      name: 'code_completion',
-      description: 'Generate intelligent code completions using Ollama',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'The current code content' },
-          language: { type: 'string', description: 'Programming language' },
-          position: {
-            type: 'object',
-            properties: { 
-              line: { type: 'number' }, 
-              character: { type: 'number' } 
-            },
-            required: ['line', 'character']
-          },
-          context: {
+  private createErrorPatternAnalysisTool(): MCPTool {
+    return this.createTool('error_pattern_analysis',
+      'Analyze error patterns and suggest preventive measures',
+      {
+        errorHistory: {
+          type: 'array',
+          items: {
             type: 'object',
             properties: {
-              fileName: { type: 'string' },
-              projectPath: { type: 'string' },
-              imports: { type: 'array', items: { type: 'string' } },
-              functions: { type: 'array', items: { type: 'string' } },
-              variables: { type: 'array', items: { type: 'string' } }
+              errorMessage: { type: 'string' },
+              timestamp: { type: 'string' },
+              filePath: { type: 'string' },
+              language: { type: 'string' },
+              fixed: { type: 'boolean' }
             }
           }
         },
-        required: ['code', 'language', 'position']
+        analysisDepth: { type: 'string', enum: ['basic', 'detailed', 'comprehensive'], default: 'detailed' }
       },
-      handler: this.handleCodeCompletion.bind(this)
-    });
+      ['errorHistory'],
+      this.handleErrorPatternAnalysis.bind(this)
+    );
   }
 
-  private setupCodeAnalysisTool(): void {
-    this.tools.set('code_analysis', {
-      name: 'code_analysis',
-      description: 'Analyze code for explanations, refactoring, optimization, or bugs',
+  private createValidationTool(): MCPTool {
+    return this.createTool('validate_fix',
+      'Validate that a proposed fix actually resolves the issue',
+      {
+        originalCode: { type: 'string', description: 'Original code with error' },
+        fixedCode: { type: 'string', description: 'Code after applying fix' },
+        language: { type: 'string', description: 'Programming language' },
+        originalError: { type: 'string', description: 'Original error message' },
+        testCases: { type: 'array', items: { type: 'string' }, description: 'Test cases to validate against (optional)' }
+      },
+      ['originalCode', 'fixedCode', 'language', 'originalError'],
+      this.handleValidateFix.bind(this)
+    );
+  }
+
+  private createTool(name: string, description: string, properties: Record<string, any>, required: string[], handler: (params: any) => Promise<any>): MCPTool {
+    return {
+      name,
+      description,
       inputSchema: {
         type: 'object',
-        properties: {
-          code: { type: 'string', description: 'The code to analyze' },
-          language: { type: 'string', description: 'Programming language' },
-          analysisType: { 
-            type: 'string', 
-            enum: ['explanation', 'refactoring', 'optimization', 'bugs'], 
-            description: 'Type of analysis to perform' 
+        properties,
+        required
+      },
+      handler
+    };
+  }
+
+  private createCodeCompletionTool(): MCPTool {
+    return this.createTool('code_completion',
+      'Generate intelligent code completions using Ollama',
+      {
+        code: { type: 'string', description: 'The current code content' },
+        language: { type: 'string', description: 'Programming language' },
+        position: {
+          type: 'object',
+          properties: {
+            line: { type: 'number' },
+            character: { type: 'number' }
+          },
+          required: ['line', 'character']
+        },
+        context: {
+          type: 'object',
+          properties: {
+            fileName: { type: 'string' },
+            projectPath: { type: 'string' },
+            imports: { type: 'array', items: { type: 'string' } },
+            functions: { type: 'array', items: { type: 'string' } },
+            variables: { type: 'array', items: { type: 'string' } }
           }
-        },
-        required: ['code', 'language', 'analysisType']
+        }
       },
-      handler: this.handleCodeAnalysis.bind(this)
-    });
+      ['code', 'language', 'position'],
+      this.handleCodeCompletion.bind(this)
+    );
   }
 
-  private setupRemainingExistingTools(): void {
-    // Code Generation Tool
-    this.tools.set('code_generation', {
-      name: 'code_generation',
-      description: 'Generate code based on natural language prompts',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          prompt: { type: 'string', description: 'Natural language description of desired code' },
-          language: { type: 'string', description: 'Target programming language' },
-          context: {
-            type: 'object',
-            properties: {
-              projectType: { type: 'string' },
-              dependencies: { type: 'array', items: { type: 'string' } },
-              style: { type: 'string' },
-            },
-          },
-        },
-        required: ['prompt', 'language'],
+  private createCodeAnalysisTool(): MCPTool {
+    return this.createTool('code_analysis',
+      'Analyze code for explanations, refactoring, optimization, or bugs',
+      {
+        code: { type: 'string', description: 'The code to analyze' },
+        language: { type: 'string', description: 'Programming language' },
+        analysisType: {
+          type: 'string',
+          enum: ['explanation', 'refactoring', 'optimization', 'bugs'],
+          description: 'Type of analysis to perform'
+        }
       },
-      handler: this.handleCodeGeneration.bind(this),
-    });
+      ['code', 'language', 'analysisType'],
+      this.handleCodeAnalysis.bind(this)
+    );
+  }
 
-    // Code Explanation Tool
-    this.tools.set('code_explanation', {
-      name: 'code_explanation',
-      description: 'Explain code functionality and concepts',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'The code to explain' },
-          language: { type: 'string', description: 'Programming language' },
-          level: {
+  private createCodeGenerationTool(): MCPTool {
+    return this.createTool('code_generation',
+      'Generate code based on natural language prompts',
+      {
+        prompt: { type: 'string', description: 'Natural language description of desired code' },
+        language: { type: 'string', description: 'Target programming language' },
+        context: {
+          type: 'object',
+          properties: {
+            projectType: { type: 'string' },
+            dependencies: { type: 'array', items: { type: 'string' } },
+            style: { type: 'string' }
+          }
+        }
+      },
+      ['prompt', 'language'],
+      this.handleCodeGeneration.bind(this)
+    );
+  }
+
+  private createCodeExplanationTool(): MCPTool {
+    return this.createTool('code_explanation',
+      'Explain code functionality and concepts',
+      {
+        code: { type: 'string', description: 'The code to explain' },
+        language: { type: 'string', description: 'Programming language' },
+        level: {
+          type: 'string',
+          enum: ['beginner', 'intermediate', 'advanced'],
+          description: 'Explanation complexity level',
+          default: 'intermediate'
+        }
+      },
+      ['code', 'language'],
+      this.handleCodeExplanation.bind(this)
+    );
+  }
+
+  private createContextAnalysisTool(): MCPTool {
+    return this.createTool('context_analysis',
+      'Analyze project context for better code suggestions',
+      {
+        projectPath: { type: 'string', description: 'Path to the project root' },
+        filePatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'File patterns to include in analysis',
+          default: ['**/*.js', '**/*.ts', '**/*.py', '**/*.java']
+        },
+        maxFiles: { type: 'number', description: 'Maximum number of files to analyze', default: 50 }
+      },
+      ['projectPath'],
+      this.handleContextAnalysis.bind(this)
+    );
+  }
+
+  private createRefactoringTool(): MCPTool {
+    return this.createTool('refactoring_suggestions',
+      'Get intelligent refactoring suggestions for code improvement',
+      {
+        code: { type: 'string', description: 'The code to refactor' },
+        language: { type: 'string', description: 'Programming language' },
+        focusAreas: {
+          type: 'array',
+          items: {
             type: 'string',
-            enum: ['beginner', 'intermediate', 'advanced'],
-            description: 'Explanation complexity level',
-            default: 'intermediate',
+            enum: ['performance', 'readability', 'maintainability', 'security', 'patterns']
           },
-        },
-        required: ['code', 'language'],
+          description: 'Areas to focus refactoring on'
+        }
       },
-      handler: this.handleCodeExplanation.bind(this),
-    });
-
-    // Context Analysis Tool
-    this.tools.set('context_analysis', {
-      name: 'context_analysis',
-      description: 'Analyze project context for better code suggestions',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          projectPath: { type: 'string', description: 'Path to the project root' },
-          filePatterns: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'File patterns to include in analysis',
-            default: ['**/*.js', '**/*.ts', '**/*.py', '**/*.java'],
-          },
-          maxFiles: { type: 'number', description: 'Maximum number of files to analyze', default: 50 },
-        },
-        required: ['projectPath'],
-      },
-      handler: this.handleContextAnalysis.bind(this),
-    });
-
-    // Refactoring Suggestions Tool
-    this.tools.set('refactoring_suggestions', {
-      name: 'refactoring_suggestions',
-      description: 'Get intelligent refactoring suggestions for code improvement',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'The code to refactor' },
-          language: { type: 'string', description: 'Programming language' },
-          focusAreas: {
-            type: 'array',
-            items: {
-              type: 'string',
-              enum: ['performance', 'readability', 'maintainability', 'security', 'patterns'],
-            },
-            description: 'Areas to focus refactoring on',
-          },
-        },
-        required: ['code', 'language'],
-      },
-      handler: this.handleRefactoringSuggestions.bind(this),
-    });
+      ['code', 'language'],
+      this.handleRefactoringSuggestions.bind(this)
+    );
   }
 
   private setupResources(): void {
-    // Existing resources...
-    this.resources.set('project_context', {
-      uri: 'context://project',
-      name: 'Project Context',
-      description: 'Current project context and metadata',
-      mimeType: 'application/json',
-      handler: this.getProjectContext.bind(this),
-    });
+    const resources = [
+      { id: 'project_context', uri: 'context://project', name: 'Project Context', description: 'Current project context and metadata', handler: this.getProjectContext.bind(this) },
+      { id: 'code_patterns', uri: 'patterns://common', name: 'Common Code Patterns', description: 'Library of common code patterns and best practices', handler: this.getCodePatterns.bind(this) },
+      { id: 'model_status', uri: 'status://ollama', name: 'Ollama Model Status', description: 'Current status and capabilities of the Ollama model', handler: this.getModelStatus.bind(this) },
+      { id: 'error_database', uri: 'errors://database', name: 'Error Solutions Database', description: 'Database of known errors and their solutions', handler: this.getErrorDatabase.bind(this) },
+      { id: 'fix_templates', uri: 'templates://fixes', name: 'Fix Templates', description: 'Templates for common error fixes by language', handler: this.getFixTemplates.bind(this) }
+    ];
 
-    this.resources.set('code_patterns', {
-      uri: 'patterns://common',
-      name: 'Common Code Patterns',
-      description: 'Library of common code patterns and best practices',
-      mimeType: 'application/json',
-      handler: this.getCodePatterns.bind(this),
-    });
-
-    this.resources.set('model_status', {
-      uri: 'status://ollama',
-      name: 'Ollama Model Status',
-      description: 'Current status and capabilities of the Ollama model',
-      mimeType: 'application/json',
-      handler: this.getModelStatus.bind(this),
-    });
-
-    // NEW ERROR-RELATED RESOURCES
-    this.resources.set('error_database', {
-      uri: 'errors://database',
-      name: 'Error Solutions Database',
-      description: 'Database of known errors and their solutions',
-      mimeType: 'application/json',
-      handler: this.getErrorDatabase.bind(this),
-    });
-
-    this.resources.set('fix_templates', {
-      uri: 'templates://fixes',
-      name: 'Fix Templates',
-      description: 'Templates for common error fixes by language',
-      mimeType: 'application/json',
-      handler: this.getFixTemplates.bind(this),
+    resources.forEach(({ id, uri, name, description, handler }) => {
+      this.resources.set(id, {
+        uri,
+        name,
+        description,
+        mimeType: 'application/json',
+        handler
+      });
     });
   }
 
   private setupHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      try {
-        return {
-          tools: Array.from(this.tools.values()).map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema
-          }))
-        };
-      } catch (error) {
-        this.logger.error('Failed to list tools:', error);
-        throw new McpError(ErrorCode.InternalError, 'Failed to retrieve tools list');
+    this.server.setRequestHandler(ListToolsRequestSchema, this.handleListTools.bind(this));
+    this.server.setRequestHandler(CallToolRequestSchema, this.handleCallTool.bind(this));
+  }
+
+  private async handleListTools() {
+    try {
+      return {
+        tools: Array.from(this.tools.values()).map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema
+        }))
+      };
+    } catch (error) {
+      this.logger.error(`Error listing tools: ${this.getErrorMessage(error)}`);
+      throw new McpError(ErrorCode.InternalError, 'Failed to retrieve tools list');
+    }
+  }
+
+  private async handleCallTool(request: any) {
+    const { name, arguments: args } = request.params;
+    const sanitizedName = this.sanitizeString(name);
+
+    try {
+      const tool = this.tools.get(name);
+      if (!tool) {
+        throw new McpError(ErrorCode.MethodNotFound, `Tool ${name} not found`);
       }
-    });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+      this.logger.info(`Executing tool: ${sanitizedName}`);
+      const result = await tool.handler(args);
+      this.logger.info(`Tool ${sanitizedName} completed successfully`);
 
-      try {
-        const tool = this.tools.get(name);
-        if (!tool) {
-          throw new McpError(ErrorCode.MethodNotFound, `Tool ${name} not found`);
-        }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(result)
+        }]
+      };
+    } catch (error) {
+      const errorMessage = this.getErrorMessage(error);
+      this.logger.error(`Tool ${sanitizedName} failed: ${this.sanitizeString(errorMessage)}`);
 
-        this.logger.info(`Executing tool: ${name}`);
-        const result = await tool.handler(args);
-        this.logger.info(`Tool ${name} completed successfully`);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(result, null, 2)
-          }]
-        };
-      } catch (error) {
-        // Log the error but don't throw - return proper error response instead
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Tool ${name} failed: ${errorMessage}`);
-        
-        // If it's already an MCP error, re-throw it to maintain proper error codes
-        if (error instanceof McpError) {
-          throw error;
-        }
-        
-        // For other errors, return a proper error response
-        return {
-          content: [{
-            type: 'text',
-            text: `Error executing tool '${name}': ${errorMessage}`
-          }],
-          isError: true
-        };
+      if (error instanceof McpError) {
+        throw error;
       }
-    });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Error executing tool '${sanitizedName}': ${this.sanitizeString(errorMessage)}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  private sanitizeString(str: string): string {
+    return str.replace(/[\r\n\t]/g, '_');
   }
 
   // ERROR HANDLING IMPROVEMENTS
@@ -518,11 +459,11 @@ export class MCPServer {
   private async handleAutoErrorFix(params: unknown): Promise<ErrorFixResponse> {
     const startTime = Date.now();
     
-    try {
+    return this.withErrorHandling(async () => {
       const request = this.validateErrorFixRequest(params);
       const cacheKey = this.generateCacheKey('error_fix', params);
-      const cached = this.cacheManager.get(cacheKey);
       
+      const cached = this.cacheManager.get(cacheKey);
       if (cached) {
         this.logger.debug('Returning cached error fix result');
         return cached;
@@ -530,60 +471,68 @@ export class MCPServer {
 
       const errorAnalysis = await this.errorAnalyzer.analyzeError(request);
       const fixes = await this.ollamaProvider.generateErrorFixes(request, errorAnalysis);
-      
+
       const rankedFixes = await this.rankAndValidateFixes(fixes, request);
-      const bestFix = rankedFixes[0] as { fixedCode: string; confidence: number; title: string; description: string; changes: any[]; preservesSemantics: boolean; requiresUserReview: boolean; testCoverage: number; estimatedTime: number } | undefined;
-      
+      const bestFix = rankedFixes[0] as any;
+
       if (!bestFix || !bestFix.fixedCode) {
         throw new Error('No valid fixes generated');
       }
 
       const validatedFix = await this.validateFix(
-        request.code, 
-        bestFix.fixedCode, 
-        request.language, 
+        request.code,
+        bestFix.fixedCode,
+        request.language,
         request.errorMessage
       );
 
-      const result: ErrorFixResponse = {
-        originalError: request.errorMessage,
-        errorType: errorAnalysis.type,
-        errorCategory: errorAnalysis.category,
-        fixes: rankedFixes as any[],
-        recommendedFix: bestFix as any,
-        isValidated: validatedFix.isValid,
-        validationDetails: validatedFix.details,
-        metadata: {
-          processingTime: Date.now() - startTime,
-          confidence: bestFix.confidence,
-          alternativeFixesCount: rankedFixes.length - 1,
-          errorAnalysisDetails: {
-            type: errorAnalysis.type,
-            category: errorAnalysis.category,
-            severity: errorAnalysis.severity || 'error',
-            cause: errorAnalysis.cause || 'Unknown cause',
-            affectedComponents: errorAnalysis.affectedComponents || [],
-            suggestedApproach: errorAnalysis.suggestedApproach || 'Standard error fixing approach',
-            complexity: errorAnalysis.complexity || 'medium',
-            confidence: errorAnalysis.confidence || 0
-          }
-        }
-      };
-
+      const result = this.buildErrorFixResponse(request, errorAnalysis, rankedFixes, bestFix, validatedFix, startTime);
+      
       if (result.isValidated) {
         this.cacheManager.set(cacheKey, result, 600000);
       }
 
       return result;
+    }, () => this.createErrorFixResponse(
+      (params as { errorMessage?: string })?.errorMessage || 'Unknown error',
+      'Auto fix handler failed',
+      Date.now() - startTime
+    ));
+  }
+
+  private buildErrorFixResponse(request: ErrorFixRequest, errorAnalysis: any, rankedFixes: any[], bestFix: any, validatedFix: any, startTime: number): ErrorFixResponse {
+    return {
+      originalError: request.errorMessage,
+      errorType: errorAnalysis.type,
+      errorCategory: errorAnalysis.category,
+      fixes: rankedFixes,
+      recommendedFix: bestFix,
+      isValidated: validatedFix.isValid,
+      validationDetails: validatedFix.details,
+      metadata: {
+        processingTime: Date.now() - startTime,
+        confidence: bestFix.confidence,
+        alternativeFixesCount: rankedFixes.length - 1,
+        errorAnalysisDetails: {
+          type: errorAnalysis.type,
+          category: errorAnalysis.category,
+          severity: errorAnalysis.severity || 'error',
+          cause: errorAnalysis.cause || 'Unknown cause',
+          affectedComponents: errorAnalysis.affectedComponents || [],
+          suggestedApproach: errorAnalysis.suggestedApproach || 'Standard error fixing approach',
+          complexity: errorAnalysis.complexity || 'medium',
+          confidence: errorAnalysis.confidence || 0
+        }
+      }
+    };
+  }
+
+  private async withErrorHandling<T>(operation: () => Promise<T>, fallback: () => T): Promise<T> {
+    try {
+      return await operation();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Auto fix handler failed: ${errorMessage}`);
-      
-      return this.createErrorFixResponse(
-        (params as { errorMessage?: string })?.errorMessage || 'Unknown error', 
-        errorMessage, 
-        Date.now() - startTime
-      );
+      this.logger.error(`Operation failed: ${this.sanitizeString(this.getErrorMessage(error))}`);
+      return fallback();
     }
   }
 
@@ -593,7 +542,8 @@ export class MCPServer {
     }
 
     const p = params as Record<string, unknown>;
-    
+
+    // Validate required parameters with proper type checking
     if (!p.errorMessage || typeof p.errorMessage !== 'string') {
       throw new Error('Missing or invalid errorMessage parameter');
     }
@@ -604,21 +554,32 @@ export class MCPServer {
       throw new Error('Missing or invalid language parameter');
     }
     
+    // Validate optional parameters
+    if (p.filePath !== undefined && typeof p.filePath !== 'string') {
+      throw new Error('Invalid filePath parameter: must be string');
+    }
+    if (p.lineNumber !== undefined && typeof p.lineNumber !== 'number') {
+      throw new Error('Invalid lineNumber parameter: must be number');
+    }
+    if (p.stackTrace !== undefined && typeof p.stackTrace !== 'string') {
+      throw new Error('Invalid stackTrace parameter: must be string');
+    }
+
     const result: ErrorFixRequest = {
       errorMessage: p.errorMessage,
       code: p.code,
       language: p.language,
       filePath: typeof p.filePath === 'string' ? p.filePath : ''
     };
-    
+
     if (typeof p.lineNumber === 'number') {
       (result as any).lineNumber = p.lineNumber;
     }
-    
+
     if (typeof p.stackTrace === 'string') {
       (result as any).stackTrace = p.stackTrace;
     }
-    
+
     if (typeof p.context === 'object' && p.context !== null) {
       const ctx = p.context as any;
       (result as any).context = {
@@ -628,13 +589,13 @@ export class MCPServer {
         buildTool: typeof ctx.buildTool === 'string' ? ctx.buildTool : undefined
       };
     }
-    
+
     return result;
   }
 
   private createErrorFixResponse(
-    originalError: string, 
-    errorMessage: string, 
+    originalError: string,
+    errorMessage: string,
     processingTime: number
   ): ErrorFixResponse {
     return {
@@ -655,15 +616,15 @@ export class MCPServer {
   }
 
   private async handleDiagnoseCode(params: DiagnosticRequest): Promise<unknown> {
-    try {
+    return this.withErrorHandling(async () => {
       const { code, language, filePath, checkTypes = ['all'] } = params;
-      
+
       if (!code || !language) {
         throw new Error('Missing required parameters: code, language');
       }
 
       const diagnostics = await this.errorAnalyzer.performDiagnostics(code, language, checkTypes);
-      
+
       return {
         diagnostics: diagnostics.map(this.mapDiagnostic),
         summary: this.calculateDiagnosticSummary(diagnostics),
@@ -671,34 +632,46 @@ export class MCPServer {
         filePath: filePath || 'untitled',
         analysisTime: new Date().toISOString()
       };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Diagnose code handler failed: ${errorMessage}`);
-      
-      return {
-        diagnostics: [],
-        summary: { errorCount: 0, warningCount: 0, infoCount: 0, totalIssues: 0 },
-        language: params.language,
-        error: `Diagnostic analysis failed: ${errorMessage}`
-      };
-    }
+    }, () => ({
+      diagnostics: [],
+      summary: { errorCount: 0, warningCount: 0, infoCount: 0, totalIssues: 0 },
+      language: params.language,
+      filePath: 'unknown',
+      analysisTime: new Date().toISOString(),
+      error: 'Diagnostic analysis failed'
+    }));
   }
 
-  private mapDiagnostic = (diagnostic: any) => ({
-    severity: diagnostic.severity,
-    message: diagnostic.message,
-    line: diagnostic.line,
-    column: diagnostic.column,
-    type: diagnostic.type,
-    code: diagnostic.code,
-    source: diagnostic.source,
-    quickFix: diagnostic.quickFix
-  });
+  private mapDiagnostic(diagnostic: any) {
+    if (!diagnostic || typeof diagnostic !== 'object') {
+      return {
+        severity: 'info',
+        message: 'Invalid diagnostic',
+        line: 0,
+        column: 0,
+        type: 'unknown',
+        code: undefined,
+        source: 'mcp-ollama',
+        quickFix: undefined
+      };
+    }
+    
+    return {
+      severity: diagnostic.severity || 'info',
+      message: diagnostic.message || 'No message',
+      line: diagnostic.line || 0,
+      column: diagnostic.column || 0,
+      type: diagnostic.type || 'unknown',
+      code: diagnostic.code,
+      source: diagnostic.source || 'mcp-ollama',
+      quickFix: diagnostic.quickFix
+    };
+  }
 
   private async handleQuickFix(params: QuickFixRequest): Promise<unknown> {
     const { code, language, issueType, issueDescription, lineNumber, severity = 'error' } = params;
 
-    try {
+    return this.withErrorHandling(async () => {
       const quickFixes = await this.ollamaProvider.generateQuickFixes({
         code,
         language,
@@ -708,32 +681,36 @@ export class MCPServer {
         ...(lineNumber !== undefined && { lineNumber })
       });
 
+      const fixesArray = Array.isArray(quickFixes) ? quickFixes : [];
       return {
-        fixes: (quickFixes as any[]).map((fix: any) => ({
-          title: fix.title || 'Quick Fix',
-          description: fix.description || 'Generated fix',
-          fixedCode: fix.fixedCode || fix.code || '',
-          changes: fix.changes || [],
-          confidence: fix.confidence || 0.5,
-          preservesSemantics: fix.preservesSemantics || true,
-          requiresUserReview: fix.requiresUserReview || false
-        })),
+        fixes: fixesArray.map(this.normalizeFix),
         issueType,
         severity,
         lineNumber,
         language,
         generatedAt: new Date().toISOString()
       };
+    }, () => ({
+      fixes: [],
+      error: 'Quick fix generation failed',
+      issueType,
+      severity,
+      lineNumber,
+      language,
+      generatedAt: new Date().toISOString()
+    }));
+  }
 
-    } catch (error) {
-      this.logger.error('Error in quick fix handler:', error);
-      return {
-        fixes: [],
-        error: `Quick fix generation failed: ${error}`,
-        issueType,
-        severity
-      };
-    }
+  private normalizeFix(fix: any) {
+    return {
+      title: fix.title || 'Quick Fix',
+      description: fix.description || 'Generated fix',
+      fixedCode: fix.fixedCode || fix.code || '',
+      changes: fix.changes || [],
+      confidence: fix.confidence || 0.5,
+      preservesSemantics: fix.preservesSemantics ?? true,
+      requiresUserReview: fix.requiresUserReview ?? false
+    };
   }
 
   private async handleBatchErrorFix(params: unknown): Promise<unknown> {
@@ -743,7 +720,7 @@ export class MCPServer {
 
     const p = params as { errors?: unknown[]; prioritizeBy?: string };
     const { errors, prioritizeBy = 'severity' } = p;
-    
+
     try {
       if (!Array.isArray(errors) || errors.length === 0) {
         throw new Error('Invalid or empty errors array');
@@ -765,8 +742,8 @@ export class MCPServer {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Batch fix handler failed: ${errorMessage}`);
-      
+      this.logger.error(`Batch fix handler failed: ${errorMessage.replace(/[\r\n\t]/g, '_')}`);
+
       return this.createBatchErrorResponse(errors?.length || 0, prioritizeBy, errorMessage);
     }
   }
@@ -793,9 +770,9 @@ export class MCPServer {
   }
 
   private isSuccessfulFix(result: PromiseSettledResult<any>): result is PromiseFulfilledResult<any> {
-    return result.status === 'fulfilled' && 
-           result.value.isValidated && 
-           result.value.recommendedFix;
+    return result.status === 'fulfilled' &&
+      result.value.isValidated &&
+      result.value.recommendedFix;
   }
 
   private createSuccessfulFix(result: PromiseFulfilledResult<any>, originalError: unknown): unknown {
@@ -815,10 +792,10 @@ export class MCPServer {
   }
 
   private createFailedFix(result: PromiseSettledResult<any>, originalError: unknown): unknown {
-    const failureReason = result.status === 'fulfilled' 
+    const failureReason = result.status === 'fulfilled'
       ? result.value.validationDetails || 'Validation failed'
       : 'Fix generation failed';
-    
+
     return {
       originalError,
       reason: failureReason
@@ -849,7 +826,7 @@ export class MCPServer {
 
     try {
       const patterns = await this.errorAnalyzer.analyzeErrorPatterns(errorHistory || [], analysisDepth);
-      
+
       return {
         patterns: patterns.commonPatterns,
         recommendations: patterns.preventiveRecommendations,
@@ -864,17 +841,17 @@ export class MCPServer {
       return {
         patterns: [],
         recommendations: [],
-        statistics: { 
-          totalErrors: 0, 
-          resolvedErrors: 0, 
-          resolutionRate: 0, 
-          byLanguage: [], 
-          byType: [] 
+        statistics: {
+          totalErrors: 0,
+          resolvedErrors: 0,
+          resolutionRate: 0,
+          byLanguage: [],
+          byType: []
         },
-        trends: { 
-          errorFrequencyTrend: { trend: 'insufficient_data', change: 0 }, 
-          mostCommonRecentErrors: [], 
-          improvementAreas: [] 
+        trends: {
+          errorFrequencyTrend: { trend: 'insufficient_data', change: 0 },
+          mostCommonRecentErrors: [],
+          improvementAreas: []
         },
         analysisDepth,
         error: `Pattern analysis failed: ${error instanceof Error ? error.message : String(error)}`
@@ -903,7 +880,7 @@ export class MCPServer {
 
     try {
       const validation = await this.validateFix(originalCode, fixedCode, language, originalError, testCases);
-      
+
       return {
         isValid: validation.isValid,
         confidence: validation.confidence,
@@ -930,110 +907,175 @@ export class MCPServer {
   }
 
   // EXISTING HANDLERS (improved with better error handling)
+  // EXISTING HANDLERS (improved with better error handling)
   private async handleCodeCompletion(params: unknown): Promise<unknown> {
-    try {
-      if (!params || typeof params !== 'object') {
-        throw new Error('Invalid parameters object');
-      }
-
+    return this.withErrorHandling(async () => {
+      this.validateParams(params, 'object');
       const p = params as {
         code?: string;
         language?: string;
         position?: { line: number; character: number };
         context?: Record<string, unknown>;
+        prefix?: string;
+        prompt?: string;
+        maxTokens?: number;
       };
 
-      if (!p.code || !p.language || !p.position) {
-        throw new Error('Missing required parameters: code, language, position');
+      if (!p.language) throw new Error('Missing required parameter: language');
+
+      if (p.code && p.position) {
+        return this.handleIDECompletion(p, params);
       }
 
-      const cacheKey = this.generateCacheKey('completion', params);
-      const cached = this.cacheManager.get(cacheKey);
-
-      if (cached) {
-        this.logger.debug('Returning cached completion result');
-        return cached;
+      const ctx = p.prefix ?? p.prompt ?? p.code;
+      if (!ctx) {
+        throw new Error('Missing required parameters: provide either (code+position) or (prefix/prompt/code)');
       }
 
-      const request: CodeCompletionRequest = {
-        code: p.code,
-        language: p.language,
-        position: p.position
-      };
-      
-      if (p.context) {
-        request.context = {
-          fileName: typeof (p.context as any).fileName === 'string' ? (p.context as any).fileName : undefined,
-          projectPath: typeof (p.context as any).projectPath === 'string' ? (p.context as any).projectPath : undefined,
-          imports: Array.isArray((p.context as any).imports) ? (p.context as any).imports : undefined,
-          functions: Array.isArray((p.context as any).functions) ? (p.context as any).functions : undefined,
-          variables: Array.isArray((p.context as any).variables) ? (p.context as any).variables : undefined
-        };
+      return this.handlePrefixCompletion(p, ctx, params);
+    }, () => ({
+      suggestions: [],
+      metadata: {
+        model: this.config?.model || 'unknown',
+        processingTime: 0,
+        confidence: 0,
+        error: 'Code completion failed'
       }
+    }));
+  }
 
-      const result = await this.ollamaProvider.generateCompletion(request);
+  private async handleIDECompletion(p: any, params: unknown) {
+    const cacheKey = this.generateCacheKey('completion:pos', params);
+    const cached = this.cacheManager.get(cacheKey);
+    if (cached) return cached;
 
-      if (result.suggestions?.length > 0) {
-        this.cacheManager.set(cacheKey, result, 300000);
+    const req: CodeCompletionRequest = {
+      code: p.code,
+      language: p.language,
+      position: p.position
+    };
+
+    if (p.context) {
+      req.context = this.normalizeContext(p.context);
+    }
+
+    const res = await this.ollamaProvider.generateCompletion(req);
+    if (res.suggestions?.length) {
+      this.cacheManager.set(cacheKey, res, 300000);
+    }
+    return res;
+  }
+
+  private async handlePrefixCompletion(p: any, ctx: string, params: unknown) {
+    const cacheKey = this.generateCacheKey('completion:prefix', {
+      language: p.language,
+      prefix: ctx,
+      maxTokens: p.maxTokens
+    });
+    
+    const cached = this.cacheManager.get(cacheKey);
+    if (cached) return cached;
+
+    const suggestions = await this.generatePrefixSuggestions(ctx, p.language, p.maxTokens);
+    
+    const result = {
+      suggestions,
+      metadata: {
+        model: this.config?.model || 'unknown',
+        mode: 'prefix',
+        processingTime: 0,
+        confidence: suggestions.length ? 0.6 : 0
       }
+    };
+    
+    if (suggestions.length) {
+      this.cacheManager.set(cacheKey, result, 300000);
+    }
+    return result;
+  }
 
-      return result;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Code completion failed: ${errorMessage}`);
-      
-      return {
-        suggestions: [],
-        metadata: {
-          model: this.config?.model || 'unknown',
-          processingTime: 0,
-          confidence: 0,
-          error: errorMessage
-        }
-      };
+  private normalizeContext(context: Record<string, unknown>) {
+    const result: {
+      fileName?: string;
+      projectPath?: string;
+      imports?: string[];
+      functions?: string[];
+      variables?: string[];
+    } = {};
+
+    if (typeof context.fileName === 'string') result.fileName = context.fileName;
+    if (typeof context.projectPath === 'string') result.projectPath = context.projectPath;
+    if (Array.isArray(context.imports)) result.imports = context.imports;
+    if (Array.isArray(context.functions)) result.functions = context.functions;
+    if (Array.isArray(context.variables)) result.variables = context.variables;
+
+    return result;
+  }
+
+  private async generatePrefixSuggestions(ctx: string, language: string, maxTokens?: number): Promise<string[]> {
+    const providerAny = this.ollamaProvider as any;
+    
+    if (typeof providerAny.completeCode === 'function') {
+      const out = await providerAny.completeCode({ prefix: ctx, language, maxTokens });
+      return Array.isArray(out) ? out : [];
+    }
+
+    const lines = ctx.split('\n');
+    const line = Math.max(0, lines.length - 1);
+    const character = lines[lines.length - 1]?.length ?? 0;
+    const res = await this.ollamaProvider.generateCompletion({
+      code: ctx,
+      language,
+      position: { line, character }
+    });
+    
+    return (res.suggestions || []).map((s: any) =>
+      typeof s === 'string' ? s : (s?.text ?? s?.completion ?? '')
+    ).filter(Boolean);
+  }
+
+  private validateParams(params: unknown, expectedType: string): void {
+    if (!params || typeof params !== expectedType) {
+      throw new Error(`Invalid parameters: expected ${expectedType}`);
     }
   }
 
-  private async handleCodeAnalysis(params: unknown): Promise<unknown> {
-    try {
-      if (!params || typeof params !== 'object') {
-        throw new Error('Invalid parameters object');
-      }
 
-      const p = params as {
+
+  private async handleCodeAnalysis(params: unknown): Promise<unknown> {
+    return this.withErrorHandling(async () => {
+      this.validateParams(params, 'object');
+      const { code, language, analysisType } = params as {
         code?: string;
         language?: string;
         analysisType?: string;
       };
 
-      if (!p.code || !p.language || !p.analysisType) {
-        throw new Error('Missing required parameters: code, language, analysisType');
+      if (!code || !language) {
+        throw new Error('Missing required parameters: code, language');
       }
 
-      const validAnalysisTypes = ['explanation', 'refactoring', 'optimization', 'bugs'] as const;
-      const analysisType = validAnalysisTypes.includes(p.analysisType as any) ? 
-        p.analysisType as typeof validAnalysisTypes[number] : 'explanation';
+      const validTypes = ['explanation', 'refactoring', 'optimization', 'bugs'] as const;
+      const normalizedType = validTypes.includes(analysisType as any) ? analysisType as typeof validTypes[number] : 'explanation';
 
-      const request: CodeAnalysisRequest = {
-        code: p.code,
-        language: p.language,
-        analysisType: analysisType,
-      };
-
-      return await this.ollamaProvider.analyzeCode(request);
-    } catch (error) {
-      this.logger.error('Code analysis failed:', error);
-      return {
-        analysis: 'Analysis failed due to an error.',
-        suggestions: [],
-        confidence: 0,
-        metadata: {
-          model: this.config.model,
-          processingTime: 0,
-        },
-      };
-    }
+      return await this.ollamaProvider.analyzeCode({
+        code,
+        language,
+        analysisType: normalizedType
+      });
+    }, () => ({
+      analysis: 'Analysis failed due to an error.',
+      suggestions: [],
+      confidence: 0,
+      metadata: {
+        model: this.config.model,
+        processingTime: 0,
+        error: 'Code analysis failed'
+      }
+    }));
   }
+
+
 
   private async handleCodeGeneration(params: unknown): Promise<unknown> {
     if (!params || typeof params !== 'object') {
@@ -1054,7 +1096,8 @@ export class MCPServer {
 
     let enhancedPrompt = prompt;
     if (context) {
-      enhancedPrompt = `${prompt}\n\nContext: ${JSON.stringify(context)}`;
+      const contextStr = this.serializeContext(context);
+      enhancedPrompt = `${prompt}\n\nContext: ${contextStr}`;
     }
 
     try {
@@ -1115,9 +1158,9 @@ export class MCPServer {
       };
     } catch (error) {
       this.logger.error('Code explanation failed:', error);
-      
+
       const p = params as { code?: string; language?: string; level?: string };
-      
+
       return {
         explanation: `Error explaining code: ${error instanceof Error ? error.message : String(error)}`,
         language: p.language || 'unknown',
@@ -1197,9 +1240,9 @@ export class MCPServer {
       };
     } catch (error) {
       this.logger.error('Refactoring suggestions failed:', error);
-      
+
       const p = params as { focusAreas?: string[] };
-      
+
       return {
         analysis: 'Refactoring analysis failed due to an error.',
         suggestions: [],
@@ -1225,19 +1268,19 @@ export class MCPServer {
       }
 
       const fixObj = fix as { fixedCode?: string; confidence?: number };
-      
+
       if (!fixObj.fixedCode) {
         continue;
       }
 
       try {
         const validation = await this.validateFix(
-          request.code, 
-          fixObj.fixedCode, 
-          request.language, 
+          request.code,
+          fixObj.fixedCode,
+          request.language,
           request.errorMessage
         );
-        
+
         rankedFixes.push({
           ...fix,
           validationScore: validation.confidence,
@@ -1259,7 +1302,7 @@ export class MCPServer {
     return rankedFixes.sort((a, b) => {
       const aObj = a as { validationScore?: number; confidence?: number };
       const bObj = b as { validationScore?: number; confidence?: number };
-      
+
       const scoreA = ((aObj.validationScore || 0) * 0.7) + ((aObj.confidence || 0) * 0.3);
       const scoreB = ((bObj.validationScore || 0) * 0.7) + ((bObj.confidence || 0) * 0.3);
       return scoreB - scoreA;
@@ -1267,10 +1310,10 @@ export class MCPServer {
   }
 
   private async validateFix(
-    originalCode: string, 
-    fixedCode: string, 
-    language: string, 
-    originalError: string, 
+    originalCode: string,
+    fixedCode: string,
+    language: string,
+    originalError: string,
     testCases?: string[]
   ): Promise<{
     isValid: boolean;
@@ -1303,7 +1346,7 @@ export class MCPServer {
       return {
         isValid: false,
         confidence: 0,
-        details: `Validation failed: ${error}`,
+        details: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         potentialIssues: ['Validation process failed'],
         testResults: [],
         semanticPreservation: false
@@ -1315,8 +1358,8 @@ export class MCPServer {
     const priorityMap: Record<string, (error: unknown) => number> = {
       'severity': (error: unknown) => {
         const errorObj = error as { severity?: string };
-        const severityOrder: Record<string, number> = { 
-          'error': 3, 'warning': 2, 'info': 1, 'hint': 0 
+        const severityOrder: Record<string, number> = {
+          'error': 3, 'warning': 2, 'info': 1, 'hint': 0
         };
         return severityOrder[errorObj.severity || 'info'] || 1;
       },
@@ -1335,8 +1378,8 @@ export class MCPServer {
     };
 
     const priorityFn = priorityMap[prioritizeBy] || priorityMap['severity'];
-    
-    return [...errors].sort((a, b) => priorityFn(b) - priorityFn(a));
+
+    return errors.slice().sort((a, b) => priorityFn(b) - priorityFn(a));
   }
 
   private calculateDiagnosticSummary(diagnostics: unknown[]): {
@@ -1346,7 +1389,7 @@ export class MCPServer {
     totalIssues: number;
   } {
     const summary = { errorCount: 0, warningCount: 0, infoCount: 0, totalIssues: 0 };
-    
+
     for (const diagnostic of diagnostics) {
       if (!diagnostic || typeof diagnostic !== 'object') {
         continue;
@@ -1354,20 +1397,23 @@ export class MCPServer {
 
       const diagObj = diagnostic as { severity?: string };
       summary.totalIssues++;
-      
+
       switch (diagObj.severity) {
-        case 'error': 
-          summary.errorCount++; 
+        case 'error':
+          summary.errorCount++;
           break;
-        case 'warning': 
-          summary.warningCount++; 
+        case 'warning':
+          summary.warningCount++;
           break;
-        case 'info': 
-          summary.infoCount++; 
+        case 'info':
+          summary.infoCount++;
+          break;
+        default:
+          summary.infoCount++;
           break;
       }
     }
-    
+
     return summary;
   }
 
@@ -1385,6 +1431,37 @@ export class MCPServer {
       return Buffer.from(JSON.stringify(params)).toString('base64').substring(0, 50);
     } catch {
       return Math.random().toString(36).substring(7);
+    }
+  }
+
+  private serializeContext(context: Record<string, unknown>): string {
+    try {
+      // Limit context size to prevent performance issues
+      const limitedContext: Record<string, unknown> = {};
+      let charCount = 0;
+      const maxChars = 2000;
+      
+      for (const [key, value] of Object.entries(context)) {
+        if (charCount >= maxChars) break;
+        
+        let serializedValue: unknown;
+        if (typeof value === 'string') {
+          serializedValue = value.substring(0, 500);
+        } else if (Array.isArray(value)) {
+          serializedValue = value.slice(0, 10);
+        } else {
+          serializedValue = value;
+        }
+        
+        // Cache the serialized string to avoid double serialization
+        const serialized = JSON.stringify(serializedValue);
+        limitedContext[key] = serializedValue;
+        charCount += serialized.length;
+      }
+      
+      return JSON.stringify(limitedContext);
+    } catch {
+      return '{"error": "Context serialization failed"}';
     }
   }
 
@@ -1443,17 +1520,17 @@ export class MCPServer {
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
         availableModels,
-        currentModel: process.env.OLLAMA_MODEL || 'codellama:7b-instruct',
+        currentModel: MCPServer.DEFAULT_MODEL,
         lastChecked: new Date().toISOString()
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Model status check failed: ${errorMessage}`);
-      
+
       return {
         status: 'error',
         availableModels: [],
-        currentModel: process.env.OLLAMA_MODEL || 'codellama:7b-instruct',
+        currentModel: MCPServer.DEFAULT_MODEL,
         lastChecked: new Date().toISOString(),
         error: errorMessage
       };
@@ -1646,9 +1723,15 @@ export class MCPServer {
   }
 
   async start(): Promise<void> {
+    if (this.isRunning) {
+      this.logger.warn('Server is already running');
+      return;
+    }
+
     try {
-      const transport = new StdioServerTransport();
-      await this.server.connect(transport);
+      this.transport = new StdioServerTransport();
+      await this.server.connect(this.transport);
+      this.isRunning = true;
       this.logger.info('Enhanced MCP Server with Auto Error Fixing started successfully');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

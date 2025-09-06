@@ -9,7 +9,7 @@ async function testMCPTool() {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      OLLAMA_HOST: 'http://localhost:11434',
+      OLLAMA_HOST: 'http://10.10.110.25:11434',
       OLLAMA_MODEL: 'codellama:7b-instruct'
     }
   });

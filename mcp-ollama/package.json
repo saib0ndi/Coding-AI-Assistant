@@ -14,7 +14,10 @@
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "test": "jest",
+    "test": "tsx src/tests/TestRunner.ts",
+    "test:watch": "tsx --watch src/tests/TestRunner.ts",
+    "api": "tsx src/api/RestServer.ts",
+    "analytics": "tsx src/analytics/PerformanceTracker.ts",
     "clean": "rm -rf dist",
     "prepare": "npm run build"
   },
@@ -25,16 +28,23 @@
     "code-completion",
     "error-fixing",
     "debugging",
-    "language-server"
+    "language-server",
+    "team-collaboration",
+    "multi-model",
+    "analytics",
+    "rest-api"
   ],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
-    "dotenv": "^17.2.1"
+    "dotenv": "^17.2.1",
+    "sqlite3": "^5.1.6",
+    "better-sqlite3": "^9.2.2"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
+    "@types/better-sqlite3": "^7.6.8",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.0.0",

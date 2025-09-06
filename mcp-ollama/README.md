@@ -115,7 +115,7 @@ mcp-ollama/
 
 ```env
 # Ollama Configuration
-OLLAMA_HOST=http://localhost:11434
+OLLAMA_HOST=http://10.10.110.25:11434
 OLLAMA_MODEL=codellama:7b-instruct
 
 # MCP Server Configuration
