@@ -1,4 +1,7 @@
-// import fetch from 'node-fetch';
+import fetch, { RequestInit, Response } from 'node-fetch';
+// Use built-in AbortController for Node.js 16+
+const AbortController = (globalThis as any).AbortController || require('abort-controller');
+
 type OllamaGenerateResponse = {
   response?: string;
   model?: string;
@@ -61,9 +64,9 @@ export class OllamaProvider implements AIProvider {
         throw new Error('Invalid protocol: only HTTP and HTTPS are allowed');
       }
 
-      // Allow localhost for development
+      // Allow localhost for development and specific Ollama server
       const hostname = url.hostname.toLowerCase();
-      const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+      const allowedHosts = ['localhost', '127.0.0.1', '::1', '10.10.110.25'];
       
       if (!allowedHosts.includes(hostname) && this.isPrivateIP(hostname)) {
         throw new Error('Access to private IP ranges is not allowed');
@@ -117,11 +120,11 @@ export class OllamaProvider implements AIProvider {
   stream?: boolean;
 }): Promise<string> {
   const data = await this.callOllama({
-    model: model ?? this.config.model,
+    model: model || this.config.model,
     prompt,
     stream,
   });
-  return data.response ?? '';
+  return data.response || '';
 }
 
 
@@ -130,7 +133,7 @@ export class OllamaProvider implements AIProvider {
       const res = await fetchWithTimeout(
         `${this.validatedHost}/api/tags`,
         { method: 'GET' },
-        this.config.timeout ?? 30000
+        this.config.timeout || 30000
       );
       return res.ok;
     } catch (error) {
@@ -144,13 +147,13 @@ export class OllamaProvider implements AIProvider {
       const res = await fetchWithTimeout(
         `${this.validatedHost}/api/tags`,
         { method: 'GET' },
-        this.config.timeout ?? 30000
+        this.config.timeout || 30000
       );
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       }
       const data = (await res.json()) as any;
-      return data?.models?.map((m: any) => m?.name).filter(Boolean) ?? [];
+      return (data && data.models && data.models.map((m: any) => m && m.name).filter(Boolean)) || [];
     } catch (error) {
       console.error('Failed to get available models:', error);
       return [];
@@ -233,7 +236,11 @@ export class OllamaProvider implements AIProvider {
 
   async generateCode(prompt: string, language: string): Promise<string> {
     try {
-      const enhancedPrompt = `Generate ${language} code for the following request:\n\n${prompt}\n\nProvide only the code without explanations:`;
+      const enhancedPrompt = `You are a helpful coding assistant. Generate clean, well-formatted ${language} code for the following request. Provide only the code without markdown formatting, explanations, or special characters:
+
+${prompt}
+
+Generate the code:`;
       
       const response = await this.callOllama({
         model: this.config.model,
@@ -241,7 +248,7 @@ export class OllamaProvider implements AIProvider {
         stream: false,
       });
 
-      return this.cleanGeneratedCode(response?.response || 'Failed to generate code');
+      return this.cleanGeneratedCode((response && response.response) || 'Failed to generate code');
     } catch (error) {
       console.error('Code generation failed:', error);
       return `// Error generating code: ${error}`;
@@ -252,7 +259,11 @@ export class OllamaProvider implements AIProvider {
 
   async explainCode(code: string, language: string): Promise<string> {
     try {
-      const prompt = `Explain the following ${language} code in detail:\n\n\`\`\`${language}\n${code}\n\`\`\`\n\nProvide a clear explanation of what this code does:`;
+      const prompt = `You are a helpful coding assistant. Explain the following ${language} code in a clear, conversational way without using markdown symbols, asterisks, or special formatting characters. Write like you're explaining to a colleague:
+
+${code}
+
+Explain what this code does, how it works, and any important details:`;
       
       const response = await this.callOllama({
         model: this.config.model,
@@ -260,7 +271,7 @@ export class OllamaProvider implements AIProvider {
         stream: false,
       });
 
-      return response?.response || 'Failed to explain code';
+      return this.formatGracefulResponse(response?.response || 'Failed to explain code');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('Code explanation failed:', errorMessage);
@@ -342,14 +353,14 @@ export class OllamaProvider implements AIProvider {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
         },
-        this.config.timeout ?? 30000
+        this.config.timeout || 30000
       );
     } catch (e: unknown) {
       const err = e as Error;
-      if (err?.name === 'AbortError') {
-        throw new Error(`Ollama request timed out after ${this.config.timeout ?? 30000} ms`);
+      if (err && err.name === 'AbortError') {
+        throw new Error(`Ollama request timed out after ${this.config.timeout || 30000} ms`);
       }
-      throw new Error(`Ollama request failed: ${err?.message ?? String(e)}`);
+      throw new Error(`Ollama request failed: ${(err && err.message) || String(e)}`);
     }
 
     if (!res.ok) {
@@ -366,7 +377,7 @@ export class OllamaProvider implements AIProvider {
       const lines = code.split('\n');
 
       const safeLine = Math.max(0, Math.min(position.line, lines.length - 1));
-      const currentLine = lines[safeLine] ?? '';
+      const currentLine = lines[safeLine] || '';
       const safeChar = Math.max(0, Math.min(position.character, currentLine.length));
       const beforeCursor = currentLine.slice(0, safeChar);
       const afterCursor  = currentLine.slice(safeChar);
@@ -387,17 +398,15 @@ export class OllamaProvider implements AIProvider {
     const { code, language, analysisType } = request;
     
     const prompts = {
-      explanation: `Explain what the following ${language} code does:`,
-      refactoring: `Suggest refactoring improvements for the following ${language} code:`,
-      optimization: `Suggest performance optimizations for the following ${language} code:`,
-      bugs: `Identify potential bugs and issues in the following ${language} code:`,
+      explanation: `You are a helpful coding assistant. Explain what the following ${language} code does in a clear, conversational way without using markdown symbols or special formatting:`,
+      refactoring: `You are a helpful coding assistant. Suggest refactoring improvements for the following ${language} code in a clear, conversational way:`,
+      optimization: `You are a helpful coding assistant. Suggest performance optimizations for the following ${language} code in a clear, conversational way:`,
+      bugs: `You are a helpful coding assistant. Identify potential bugs and issues in the following ${language} code in a clear, conversational way:`,
     };
 
     return `${prompts[analysisType]}
 
-\`\`\`${language}
 ${code}
-\`\`\`
 
 Provide a detailed analysis:`;
   }
@@ -448,7 +457,7 @@ Analyze if the fix is correct and complete:`;
 
 private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestion[] {
   try {
-    const raw = (response?.response ?? '').trim();
+    const raw = ((response && response.response) || '').trim();
     if (!raw) return [];
 
     // Strip ```lang ... ``` fences if present
@@ -471,9 +480,9 @@ private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestio
 
   private parseAnalysisResponse(response: any): any {
     try {
-      const analysisText = response?.response || '';
+      const analysisText = (response && response.response) || '';
       return {
-        explanation: analysisText,
+        explanation: this.formatGracefulResponse(analysisText),
         suggestions: [],
       };
     } catch (error) {
@@ -487,7 +496,7 @@ private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestio
 
   private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[] {
     try {
-      const responseText = response?.response || '';
+      const responseText = (response && response.response) || '';
       
       return [{
         title: 'AI-generated fix',
@@ -508,7 +517,7 @@ private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestio
 
 private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
   try {
-    const responseText = response?.response ?? '';
+    const responseText = (response && response.response) || '';
     // You can parse multiple options later; for now return one generic suggestion
     return [{
       title: 'Quick fix',
@@ -526,7 +535,7 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
 
   private parseValidationResponse(response: any): any {
     try {
-      const validationText = response?.response || '';
+      const validationText = (response && response.response) || '';
       if (!validationText.trim()) {
         throw new Error('Empty validation response');
       }
@@ -611,6 +620,57 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
     return cleaned.trim();
   }
 
+  private formatGracefulResponse(response: string): string {
+    if (!response) return response;
+    
+    // Remove markdown formatting and special characters
+    let formatted = response
+      // Remove markdown headers
+      .replace(/#{1,6}\s*/g, '')
+      // Remove bold/italic markers
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/_([^_]+)_/g, '$1')
+      // Remove code block markers
+      .replace(/```[\w]*\n?/g, '')
+      .replace(/```/g, '')
+      // Remove inline code markers
+      .replace(/`([^`]+)`/g, '$1')
+      // Remove bullet points and list markers
+      .replace(/^\s*[-*+]\s+/gm, '')
+      .replace(/^\s*\d+\.\s+/gm, '')
+      // Remove excessive newlines
+      .replace(/\n{3,}/g, '\n\n')
+      // Clean up whitespace
+      .trim();
+    
+    // Format as conversational paragraphs
+    const sentences = formatted.split(/(?<=[.!?])\s+/);
+    const paragraphs = [];
+    let currentParagraph = [];
+    
+    for (const sentence of sentences) {
+      if (sentence.trim()) {
+        currentParagraph.push(sentence.trim());
+        
+        // Start new paragraph after 2-3 sentences
+        if (currentParagraph.length >= 2 && 
+            (sentence.includes('However') || sentence.includes('Additionally') || 
+             sentence.includes('Furthermore') || sentence.includes('Moreover'))) {
+          paragraphs.push(currentParagraph.join(' '));
+          currentParagraph = [];
+        }
+      }
+    }
+    
+    if (currentParagraph.length > 0) {
+      paragraphs.push(currentParagraph.join(' '));
+    }
+    
+    return paragraphs.join('\n\n');
+  }
+
   getCurrentModel(): string {
     return this.config.model;
   }
@@ -618,7 +678,7 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
   private generateFallbackFix(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): CodeFix[] {
     const fallbackFixes: Record<string, string> = {
       'undefined_variable': `// Declare the variable
-let ${request.errorMessage.match(/\w+/)?.[0] || 'variable'} = null;
+let ${(() => { const match = request.errorMessage.match(/\w+/); return match ? match[0] : 'variable'; })()} = null;
 ${request.code}`,
       'import_error': `// Add import statement
 // import { module } from 'package';

@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import * as dotenv from 'dotenv';
-dotenv.config({ override: false }); // let shell env (e.g. PORT) win over .env
+dotenv.config({ override: false });
 
 import { MCPServer } from './server/MCPServer.js';
-import { OllamaConfig } from './types/index.js';
+import { HTTPServer } from './server/HTTPServer.js';
+import { OllamaConfig, ModelConfig } from './types/index.js';
 import { Logger } from './utils/Logger.js';
-import { RestServer } from './api/RestServer.js';
-import { PerformanceTracker } from './analytics/PerformanceTracker.js';
-import { TeamManager } from './utils/TeamManager.js';
+import fetch from 'node-fetch';
 
 const logger = new Logger();
 
@@ -17,53 +16,86 @@ async function main() {
     // ---- Model / Ollama configuration ----
     const parseTimeout = (value: string | undefined): number => {
       const parsed = Number(value);
-      return isNaN(parsed) || parsed <= 0 ? 120000 : parsed;
+      const defaultTimeout = Number(process.env.DEFAULT_TIMEOUT) || 120000;
+      return isNaN(parsed) || parsed <= 0 ? defaultTimeout : parsed;
     };
     
     const parsePort = (value: string | undefined): number => {
       const parsed = Number(value);
-      return isNaN(parsed) || parsed <= 0 || parsed > 65535 ? 3002 : parsed;
+      const defaultPort = Number(process.env.DEFAULT_MCP_PORT) || 3077;
+      return isNaN(parsed) || parsed <= 0 || parsed > 65535 ? defaultPort : parsed;
     };
 
+    // Fetch available models from Ollama server
+    const fetchAvailableModels = async (host: string): Promise<ModelConfig[]> => {
+      try {
+        const response = await fetch(`${host}/api/tags`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        const models = data.models || [];
+        
+        return models.map((model: any) => ({
+          name: model.name,
+          provider: 'ollama',
+          endpoint: host,
+          capabilities: ['completion', 'analysis', 'generation', 'explanation', 'error_fixing']
+        }));
+      } catch (error) {
+        const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+        logger.warn(`Failed to fetch models from ${host}: ${sanitizedError}`);
+        return [];
+      }
+    };
+
+    const ollamaHost = process.env.OLLAMA_HOST || `https://localhost:${process.env.OLLAMA_PORT || 11434}`;
+    const modelConfigs = await fetchAvailableModels(ollamaHost);
+
+    // Dynamic model selection based on availability and performance
+    const selectOptimalModel = (models: ModelConfig[]): string => {
+      if (process.env.OLLAMA_MODEL) return process.env.OLLAMA_MODEL;
+      
+      // Prefer coding models
+      const codingModels = models.filter(m => 
+        m.name.includes('coder') || m.name.includes('code') || m.name.includes('deepseek')
+      );
+      
+      return codingModels[0]?.name || models[0]?.name || 'deepseek-coder-v2:236b';
+    };
+    
+    const primaryModel = selectOptimalModel(modelConfigs);
+    
     const config: OllamaConfig = {
-      host: process.env.OLLAMA_HOST || 'http://10.10.110.25:11434',
-      model: process.env.OLLAMA_MODEL || 'codellama:7b-instruct',
-      timeout: parseTimeout(process.env.OLLAMA_TIMEOUT_MS ?? process.env.COMPLETION_TIMEOUT),
+      host: ollamaHost,
+      model: primaryModel,
+      timeout: parseTimeout(process.env.OLLAMA_TIMEOUT_MS || process.env.COMPLETION_TIMEOUT),
     };
+    
+    logger.info(`Found ${modelConfigs.length} models: ${modelConfigs.map(m => m.name).join(', ')}`);
+    logger.info(`Using primary model: ${primaryModel}`);
 
-    // ---- REST bind configuration (PORT takes precedence) ----
-    const restHost = process.env.BIND_HOST || '0.0.0.0';
-    const restPort = parsePort(
-      process.env.PORT ??
-      process.env.MCP_SERVER_PORT ??
-      process.env.REST_API_PORT
-    );
-
-    logger.info('Starting MCP-Ollama Enhanced Server...');
+    logger.info('Starting MCP-Ollama Server...');
     logger.info(`Configuration: ${JSON.stringify(config, null, 2).replace(/[\r\n]/g, ' ')}`);
-    logger.info(`REST bind target: ${restHost}:${restPort}`);
 
     if (!config.host || !config.model) {
       throw new Error('Missing required configuration: OLLAMA_HOST and OLLAMA_MODEL must be set');
     }
 
-    // ---- Create services ----
+    // ---- Create servers ----
     const mcpServer = new MCPServer(config);
-    const restServer = new RestServer(mcpServer, restPort);
-    const performanceTracker = new PerformanceTracker();
-    const teamManager = new TeamManager(); // kept for initialization side-effects if any
-    void teamManager; // avoid unused warning if no methods are called
+    const httpServer = new HTTPServer(config, parsePort(process.env.MCP_SERVER_PORT));
 
     // ---- Graceful shutdown ----
-    let reportInterval: NodeJS.Timeout;
-    
     const graceful = async (signal: string) => {
       logger.info(`Received ${signal}, shutting down gracefully...`);
       try {
-        if (reportInterval) clearInterval(reportInterval);
-        await mcpServer.stop();
+        await Promise.all([
+          mcpServer.stop(),
+          httpServer.stop()
+        ]);
       } catch (e) {
-        logger.error('Error during shutdown:', e);
+        const sanitizedError = e instanceof Error ? e.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+        logger.error(`Error during shutdown: ${sanitizedError}`);
         process.exitCode = 1;
       } finally {
         process.exit();
@@ -73,7 +105,8 @@ async function main() {
     process.on('SIGTERM', () => void graceful('SIGTERM'));
 
     process.on('uncaughtException', (error) => {
-      logger.error('Uncaught exception:', error);
+      const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+      logger.error(`Uncaught exception: ${sanitizedError}`);
       process.exit(1);
     });
     process.on('unhandledRejection', (reason) => {
@@ -83,34 +116,31 @@ async function main() {
     });
 
     // ---- Start servers ----
-    await mcpServer.start();
-    await restServer.start();
-
-    // ---- Periodic performance report ----
-    reportInterval = setInterval(() => {
-      try {
-        logger.info('Performance Report:', performanceTracker.generateReport());
-      } catch (e) {
-        logger.error('Failed to generate performance report:', e);
-      }
-    }, 60 * 60 * 1000); // hourly
+    await Promise.all([
+      mcpServer.start(),
+      httpServer.start()
+    ]);
 
     // ---- Capability banner ----
-    logger.info('MCP-Ollama Enhanced Server is running and ready to accept connections');
+    logger.info('MCP-Ollama Server is running and ready to accept connections');
+    const protocol = process.env.USE_HTTPS === 'true' ? 'HTTPS' : 'HTTP';
+    logger.info(`${protocol} API available on port ${parsePort(process.env.MCP_SERVER_PORT)}`);
+    if (protocol === 'HTTPS') {
+      logger.info('SSL certificates should be placed in ./certs/ directory');
+    }
     logger.info('Server capabilities:');
-    logger.info('- Intelligent Code Completion');
-    logger.info('- Code Analysis & Explanation');
-    logger.info('- Code Generation');
+    logger.info('- Code Completion & Analysis');
+    logger.info('- Code Generation & Explanation');
     logger.info('- Auto Error Fixing');
     logger.info('- Real-time Diagnostics');
-    logger.info('- Batch Error Processing');
-    logger.info('- Error Pattern Analysis');
     logger.info('- Context-aware Suggestions');
+    logger.info('- HTTP REST API & Streaming');
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
+    const msg = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
     logger.error(`Failed to start server: ${msg}`);
     if (error instanceof Error && error.stack) {
-      logger.error('Stack trace:', error.stack);
+      const sanitizedStack = error.stack.replace(/[\r\n\t]/g, '_');
+      logger.error(`Stack trace: ${sanitizedStack}`);
     }
     process.exit(1);
   }

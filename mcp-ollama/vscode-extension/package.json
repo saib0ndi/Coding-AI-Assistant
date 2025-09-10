@@ -1,12 +1,15 @@
 {
-  "name": "mcp-ollama-assistant",
-  "displayName": "MCP Ollama AI Assistant",
-  "description": "AI-powered code completion and error fixing with MCP-Ollama server",
-  "version": "1.0.0",
+  "name": "smartcode-aiassist",
+  "displayName": "SmartCode-AIAssist",
+  "description": "AI-powered code assistance using local Ollama models",
+  "version": "1.0.10",
+  "publisher": "saibondi",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.103.0"
   },
-  "categories": ["Other", "Machine Learning", "Debuggers"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -14,83 +17,146 @@
   "contributes": {
     "commands": [
       {
-        "command": "mcpOllama.fixError",
-        "title": "Fix Error with AI",
-        "category": "MCP Ollama"
+        "command": "mcp-ollama.enable",
+        "title": "Enable SmartCode-AIAssist"
       },
       {
-        "command": "mcpOllama.explainCode",
-        "title": "Explain Code",
-        "category": "MCP Ollama"
+        "command": "mcp-ollama.disable",
+        "title": "Disable SmartCode-AIAssist"
       },
       {
-        "command": "mcpOllama.refactorCode",
-        "title": "Suggest Refactoring",
-        "category": "MCP Ollama"
+        "command": "mcp-ollama.explain",
+        "title": "Explain Code"
       },
       {
-        "command": "mcpOllama.diagnoseCode",
-        "title": "Diagnose Code Issues",
-        "category": "MCP Ollama"
+        "command": "mcp-ollama.fix",
+        "title": "Fix Code"
       },
       {
-        "command": "mcpOllama.generateCode",
-        "title": "Generate Code from Description",
-        "category": "MCP Ollama"
+        "command": "mcp-ollama.tests",
+        "title": "Generate Tests"
+      },
+      {
+        "command": "mcp-ollama.docs",
+        "title": "Generate Documentation"
+      },
+      {
+        "command": "mcp-ollama.openChat",
+        "title": "Open SmartCode-AIAssist Chat"
       }
     ],
+    "keybindings": [
+      {
+        "command": "mcp-ollama.nextSuggestion",
+        "key": "alt+]",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.previousSuggestion",
+        "key": "alt+[",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.alternatives",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.acceptSuggestion",
+        "key": "tab",
+        "when": "editorTextFocus && mcp-ollama.suggestionVisible"
+      }
+    ],
+    "configuration": {
+      "title": "SmartCode-AIAssist",
+      "properties": {
+        "mcp-ollama.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable SmartCode-AIAssist suggestions"
+        },
+        "mcp-ollama.host": {
+          "type": "string",
+          "default": "https://localhost:11434",
+          "description": "Ollama server host"
+        },
+        "mcp-ollama.serverUrl": {
+          "type": "string",
+          "default": "https://localhost:3077",
+          "description": "MCP server URL"
+        },
+        "mcp-ollama.serverPath": {
+          "type": "string",
+          "default": "https://localhost:3077",
+          "description": "MCP server path"
+        },
+        "mcp-ollama.model": {
+          "type": "string",
+          "default": "codellama:7b-instruct",
+          "description": "Ollama model to use"
+        },
+        "mcp-ollama.useHttps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use HTTPS for secure connections"
+        },
+        "mcp-ollama.suggestionDelay": {
+          "type": "number",
+          "default": 500,
+          "description": "Delay before showing suggestions (ms)"
+        },
+        "mcp-ollama.maxSuggestions": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of suggestions"
+        }
+      }
+    },
     "menus": {
       "editor/context": [
         {
-          "command": "mcpOllama.fixError",
+          "command": "mcp-ollama.explain",
           "when": "editorHasSelection",
-          "group": "mcpOllama@1"
+          "group": "smartcode@1"
         },
         {
-          "command": "mcpOllama.explainCode",
+          "command": "mcp-ollama.fix",
           "when": "editorHasSelection",
-          "group": "mcpOllama@2"
+          "group": "smartcode@2"
         },
         {
-          "command": "mcpOllama.refactorCode",
+          "command": "mcp-ollama.tests",
           "when": "editorHasSelection",
-          "group": "mcpOllama@3"
+          "group": "smartcode@3"
+        },
+        {
+          "command": "mcp-ollama.docs",
+          "when": "editorHasSelection",
+          "group": "smartcode@4"
+        },
+        {
+          "command": "mcp-ollama.openChat",
+          "group": "smartcode@5"
         }
       ]
-    },
-    "configuration": {
-      "title": "MCP Ollama",
-      "properties": {
-        "mcpOllama.serverUrl": {
-          "type": "string",
-          "default": "http://localhost:3002",
-          "description": "MCP-Ollama server URL"
-        },
-        "mcpOllama.autoFix": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable automatic error fixing"
-        },
-        "mcpOllama.showDiagnostics": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show real-time diagnostics"
-        }
-      }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "build": "npm run compile",
+    "package": "vsce package"
   },
   "devDependencies": {
-    "@types/vscode": "^1.74.0",
     "@types/node": "16.x",
-    "typescript": "^4.9.4"
+    "@types/node-fetch": "^2.6.2",
+    "@types/vscode": "^1.103.0",
+    "typescript": "^4.9.4",
+    "vsce": "^2.15.0"
   },
   "dependencies": {
-    "node-fetch": "^2.6.7",
-    "@types/node-fetch": "^2.6.2"
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "node-fetch": "^2.6.7"
   }
 }

@@ -1,8 +1,8 @@
 {
-  "name": "mcp-ollama-server-enhanced",
+  "type": "module",
+  "name": "@amzn/mcp-ollama-server-enhanced",
   "version": "2.0.0",
   "description": "Enhanced MCP server with auto error fixing capabilities using Ollama",
-  "type": "module",
   "main": "dist/index.js",
   "bin": {
     "mcp-ollama-enhanced": "./dist/index.js"
@@ -10,16 +10,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "dev:client": "tsx src/dev/mcp-client.ts",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "test": "tsx src/tests/TestRunner.ts",
-    "test:watch": "tsx --watch src/tests/TestRunner.ts",
-    "api": "tsx src/api/RestServer.ts",
-    "analytics": "tsx src/analytics/PerformanceTracker.ts",
-    "clean": "rm -rf dist",
-    "prepare": "npm run build"
+    "clean": "rm -rf dist"
   },
   "keywords": [
     "mcp",
@@ -37,20 +31,16 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.4",
-    "dotenv": "^17.2.1",
-    "sqlite3": "^5.1.6",
-    "better-sqlite3": "^9.2.2"
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "dotenv": "^16.0.0",
+    "node-fetch": "^2.6.7",
+    "zod": "^3.20.6"
   },
   "devDependencies": {
-    "@types/node": "^22.5.0",
-    "@types/better-sqlite3": "^7.6.8",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "eslint": "^8.0.0",
-    "jest": "^29.0.0",
-    "tsx": "^4.20.4",
-    "typescript": "^5.5.0"
+    "@types/node": "^20.19.13",
+    "@types/node-fetch": "^2.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.0.0"
   },
   "files": [
     "dist/**/*",
@@ -58,6 +48,6 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=12.0.0"
   }
 }

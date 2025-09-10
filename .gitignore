@@ -13,3 +13,5 @@ __pycache__/
 !.vscode/extensions.json
 # Env
 .env
+vscode-extension/*.vsix
+server.log

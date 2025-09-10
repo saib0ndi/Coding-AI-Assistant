@@ -1,0 +1,20 @@
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Builds / dist
+dist/
+out/
+build/
+
+# TypeScript
+*.tsbuildinfo
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

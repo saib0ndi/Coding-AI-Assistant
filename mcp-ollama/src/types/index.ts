@@ -21,6 +21,14 @@ export interface OllamaConfig {
   timeout: number;
 }
 
+export interface ModelConfig {
+  name: string;
+  provider: 'ollama' | 'openai' | 'anthropic';
+  endpoint?: string;
+  apiKey?: string;
+  capabilities: string[];
+}
+
 // AI Provider Interface
 export interface AIProvider {
   generateCompletion(request: CodeCompletionRequest): Promise<CodeCompletionResponse>;

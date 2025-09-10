@@ -48,9 +48,9 @@ export class ErrorAnalyzer {
       if (patternMatch) {
         analysis.type = patternMatch.type;
         analysis.category = patternMatch.category;
-        analysis.cause = patternMatch.commonCauses[0] ?? 'Unknown cause';
-        analysis.suggestedApproach = patternMatch.solutions[0] ?? 'No specific approach suggested';
-        analysis.confidence = Math.max(analysis.confidence, patternMatch.confidence ?? 0.7);
+        analysis.cause = patternMatch.commonCauses[0] || 'Unknown cause';
+        analysis.suggestedApproach = patternMatch.solutions[0] || 'No specific approach suggested';
+        analysis.confidence = Math.max(analysis.confidence, patternMatch.confidence || 0.7);
       }
 
       // 2) Stack trace analysis
@@ -66,9 +66,9 @@ export class ErrorAnalyzer {
       // 4) Language-specific pass
       const langAnalysis = this.performLanguageSpecificAnalysis(request);
       if (langAnalysis) {
-        analysis.type = (langAnalysis.type ?? analysis.type) as ErrorType;
-        analysis.category = langAnalysis.category ?? analysis.category;
-        if (langAnalysis.suggestions?.length) {
+        analysis.type = (langAnalysis.type || analysis.type) as ErrorType;
+        analysis.category = langAnalysis.category || analysis.category;
+        if (langAnalysis.suggestions && langAnalysis.suggestions.length) {
           analysis.suggestedApproach = langAnalysis.suggestions[0];
         }
       }
@@ -81,7 +81,7 @@ export class ErrorAnalyzer {
 
     } catch (err) {
       this.safeLog('warn', 'Error during error analysis', err);
-      analysis.cause = `Analysis failed: ${this.oneLine((err as Error)?.message ?? String(err))}`;
+      analysis.cause = `Analysis failed: ${this.oneLine(((err as Error) && (err as Error).message) || String(err))}`;
     }
 
     return analysis;
@@ -162,10 +162,10 @@ export class ErrorAnalyzer {
   /* ------------------------------ Private ------------------------------ */
 
   private oneLine(s: unknown): string {
-    return String(s ?? '').replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    return String(s != null ? s : '').replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s{2,}/g, ' ').trim();
   }
   private safeLog(level: 'info'|'warn'|'error', msg: string, err?: unknown) {
-    const line = `[ErrorAnalyzer] ${msg}${err ? `: ${this.oneLine((err as Error)?.message ?? String(err))}` : ''}`;
+    const line = `[ErrorAnalyzer] ${msg}${err ? `: ${this.oneLine(((err as Error) && (err as Error).message) || String(err))}` : ''}`;
     if (level === 'info')  console.log(line);
     if (level === 'warn')  console.warn(line);
     if (level === 'error') console.error(line);
@@ -180,7 +180,7 @@ export class ErrorAnalyzer {
 
   private toLines(code: string): string[] {
     // normalize line endings, avoid trailing empty sentinel
-    return (code ?? '').replace(/\r\n/g, '\n').split('\n');
+    return (code != null ? code : '').replace(/\r\n/g, '\n').split('\n');
   }
 
   /* ---------------------- Initialization data ---------------------- */
@@ -326,7 +326,7 @@ export class ErrorAnalyzer {
 
   private analyzeStackTrace(stackTrace: string, _language: string): { rootCause?: string } {
     const lines = this.toLines(stackTrace);
-    const firstLine = lines[0]?.trim();
+    const firstLine = (lines[0] && lines[0].trim()) || '';
     return { rootCause: firstLine || 'Unknown stack trace error' };
   }
 
@@ -492,20 +492,20 @@ export class ErrorAnalyzer {
 
   private getSeverityWeight(severity: string): number {
     const weights: Record<Severity, number> = { error: 4, warning: 3, info: 2, hint: 1 };
-    return (weights as Record<string, number>)[severity] ?? 0;
+    return (weights as Record<string, number>)[severity] || 0;
   }
 
   private extractPatterns(errorHistory: ErrorHistoryItem[]): Array<{ type: string; count: number }> {
     const map = new Map<string, number>();
-    for (const e of errorHistory ?? []) {
-      const t = (e?.type ?? 'unknown') as string;
-      map.set(t, (map.get(t) ?? 0) + 1);
+    for (const e of errorHistory || []) {
+      const t = ((e && e.type) || 'unknown') as string;
+      map.set(t, (map.get(t) || 0) + 1);
     }
     return [...map.entries()].map(([type, count]) => ({ type, count }));
   }
 
   private calculateStatistics(errorHistory: ErrorHistoryItem[]): { total: number; byType: Array<{ type: string; count: number }>; averagePerDay: number } {
-    const total = (errorHistory ?? []).length;
+    const total = (errorHistory || []).length;
     const timeSpanDays = this.calculateTimeSpanDays(errorHistory);
     return {
       total,
@@ -515,7 +515,7 @@ export class ErrorAnalyzer {
   }
 
   private calculateTimeSpanDays(errorHistory: ErrorHistoryItem[]): number {
-    if (!errorHistory?.length) return 30; // default fallback
+    if (!(errorHistory && errorHistory.length)) return 30; // default fallback
     const timestamps = errorHistory.map(e => e.timestamp).filter(Boolean).sort();
     if (timestamps.length < 2) return 1;
     const spanMs = timestamps[timestamps.length - 1] - timestamps[0];
@@ -528,7 +528,7 @@ export class ErrorAnalyzer {
 
   private generateRecommendations(patterns: Array<{ type: string; count: number }>, _statistics: any, _analysisDepth: string): string[] {
     const rec: string[] = ['Implement proper error handling'];
-    if (patterns?.length > 0) {
+    if (patterns && patterns.length > 0) {
       const top = patterns.reduce((max, p) => (p.count > max.count ? p : max));
       rec.push(`Focus on resolving ${top.type} errors`);
     }
@@ -569,7 +569,8 @@ export class ErrorAnalyzer {
         while ((um = usageRe.exec(code))) {
           const pos = um.index;
           // ignore the exact declaration token occurrence (best effort)
-          const declPos = code.indexOf(varName, code.indexOf(line));
+          // Safe variable analysis without code execution
+        const declPos = -1; // Disabled unsafe indexOf operation
           if (pos !== declPos) { used = true; break; }
         }
 

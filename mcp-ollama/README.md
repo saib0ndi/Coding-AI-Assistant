@@ -1,262 +1,271 @@
-# MCP-Ollama Enhanced Server
+# MCP-Ollama AI Assistant
 
-## 🎯 Project Motto
-**"Intelligent Code Assistance with Automated Error Resolution"**
+A complete AI-powered coding assistant that integrates Ollama models with VS Code through the Model Context Protocol (MCP). Features GitHub Copilot-like functionality with local AI models.
 
-Empowering developers with AI-driven code completion, analysis, and automated error fixing capabilities through the Model Context Protocol (MCP) and Ollama integration.
+## 🚀 Features
 
-## 🚀 Overview
+### Core Capabilities
+- **Real-time Code Completion** - Intelligent suggestions as you type
+- **Auto Error Fixing** - Automatically detect and fix code errors
+- **Code Explanation** - Detailed explanations of code functionality
+- **Code Generation** - Generate code from natural language descriptions
+- **Inline Suggestions** - Ghost text completions like GitHub Copilot
+- **Chat Assistant** - Interactive coding help in sidebar
 
-The MCP-Ollama Enhanced Server is a comprehensive AI-powered development assistant that provides intelligent code completion, analysis, and automated error fixing capabilities. Built on the Model Context Protocol (MCP), it integrates seamlessly with Ollama to deliver local, privacy-focused AI assistance for developers.
+### Advanced Features
+- **Multi-Model Support** - Switch between different Ollama models
+- **Context-Aware Suggestions** - Uses workspace and file context
+- **Streaming Responses** - Real-time streaming for better UX
+- **Slash Commands** - `/fix`, `/explain`, `/tests`, `/docs`, `/optimize`
+- **Security Scanning** - Detect security vulnerabilities
+- **Performance Optimization** - Suggest performance improvements
+- **Code Translation** - Convert between programming languages
+- **Test Generation** - Automatically generate unit tests
+- **Documentation Generation** - Create comprehensive docs
 
-## 🌟 Key Features
+### Enterprise Features
+- **Team Collaboration** - Shared settings and policies
+- **Usage Analytics** - Track adoption and performance
+- **Privacy-First** - All processing happens locally
+- **Offline Support** - Works without internet connection
 
-### 🔧 Core AI Capabilities
-- **Intelligent Code Completion**: Context-aware code suggestions with multi-language support
-- **Code Analysis & Explanation**: Deep code understanding with refactoring suggestions
-- **Code Generation**: Natural language to code conversion
-- **Multi-language Support**: JavaScript, TypeScript, Python, Java, C++, Rust, Go, and more
+## 📋 Requirements
 
-### 🛠️ Advanced Error Fixing (NEW)
-- **Auto Error Fix**: Automatically analyze and fix compilation, runtime, and linting errors
-- **Real-time Diagnostics**: Continuous code quality monitoring with syntax, semantic, style, security, and performance checks
-- **Quick Fix Suggestions**: Instant solutions for common coding issues
-- **Batch Error Processing**: Handle multiple errors simultaneously with intelligent prioritization
-- **Error Pattern Recognition**: Learn from error history to prevent recurring issues
-- **Smart Code Validation**: Verify that fixes actually resolve the original problems
+- **Node.js** 16+ 
+- **VS Code** 1.74+
+- **Ollama** with models installed
+- **Git** (for installation)
 
-### 🧠 Intelligence Features
-- **Context Awareness**: Project-wide understanding with dependency analysis
-- **Caching System**: Intelligent response caching for improved performance
-- **Pattern Recognition**: Learn from coding patterns and error histories
-- **Multi-file Analysis**: Understand relationships across project files
+## 🛠️ Installation
 
-### 🔒 Security & Performance
-- **Local Processing**: All AI processing happens locally via Ollama
-- **Privacy-First**: No code sent to external services
-- **Secure Path Handling**: Protection against path traversal attacks
-- **Log Injection Prevention**: Sanitized logging to prevent security vulnerabilities
-- **Performance Optimization**: Efficient caching and parallel processing
-
-## 📁 Project Structure
-
-```
-mcp-ollama/
-├── src/
-│   ├── providers/
-│   │   └── OllamaProvider.ts      # Core AI provider implementation
-│   ├── server/
-│   │   └── MCPServer.ts           # Main MCP server with all tools
-│   ├── types/
-│   │   └── index.ts               # TypeScript type definitions
-│   └── utils/
-│       ├── CacheManager.ts        # Intelligent caching system
-│       ├── ContextManager.ts      # Project context analysis
-│       ├── ErrorAnalyzer.ts       # Advanced error analysis engine
-│       └── Logger.ts              # Secure logging utility
-├── package.json                   # Project dependencies and scripts
-├── tsconfig.json                  # TypeScript configuration
-└── .env.example                   # Environment configuration template
+### Quick Install
+```bash
+git clone <repository-url>
+cd mcp-ollama
+chmod +x install.sh
+./install.sh
 ```
 
-## 🛠️ Available Tools
+### HTTPS Setup (Recommended)
+```bash
+# Generate SSL certificates
+./generate-certs.sh
 
-### 📝 Code Assistance Tools
-1. **code_completion** - Intelligent code completions
-2. **code_analysis** - Code explanation, refactoring, optimization, bug detection
-3. **code_generation** - Generate code from natural language
-4. **code_explanation** - Detailed code explanations
-5. **refactoring_suggestions** - Smart refactoring recommendations
-
-### 🔧 Error Fixing Tools (Enhanced)
-6. **auto_error_fix** - Automatically fix errors with AI analysis
-7. **diagnose_code** - Real-time code diagnostics
-8. **quick_fix** - Instant solutions for specific issues
-9. **batch_error_fix** - Process multiple errors efficiently
-10. **error_pattern_analysis** - Analyze error patterns for prevention
-11. **validate_fix** - Verify fix effectiveness
-
-### 🔍 Analysis Tools
-12. **context_analysis** - Project-wide context understanding
-
-## 🚀 Installation & Setup
-
-### Prerequisites
-- Node.js 18.0.0 or higher
-- Ollama installed and running locally
-- A compatible Ollama model (e.g., codellama:7b-instruct)
-
-### Installation Steps
-
-1. **Clone and Install**
-   ```bash
-   git clone <repository-url>
-   cd mcp-ollama
-   npm install
-   ```
-
-2. **Configure Environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Ollama configuration
-   ```
-
-3. **Build the Project**
-   ```bash
-   npm run build
-   ```
-
-4. **Start the Server**
-   ```bash
-   npm start
-   ```
-
-### Environment Configuration
-
-```env
-# Ollama Configuration
-OLLAMA_HOST=http://10.10.110.25:11434
-OLLAMA_MODEL=codellama:7b-instruct
-
-# MCP Server Configuration
-MCP_SERVER_PORT=3001
-MCP_SERVER_HOST=localhost
-
-# Feature Toggles
-ENABLE_CODE_COMPLETION=true
-ENABLE_CODE_EXPLANATION=true
-ENABLE_CODE_GENERATION=true
-ENABLE_REFACTORING=true
-ENABLE_CONTEXT_AWARENESS=true
-ENABLE_MULTI_FILE_ANALYSIS=true
-
-# Performance Settings
-MAX_COMPLETION_LENGTH=500
-COMPLETION_TIMEOUT=5000
-CACHE_ENABLED=true
-CACHE_TTL=300000
-
-# Logging
-LOG_LEVEL=info
-LOG_FILE=logs/mcp-ollama.log
+# Set environment variables
+export USE_HTTPS=true
+export SSL_CERT_PATH=./certs/cert.pem
+export SSL_KEY_PATH=./certs/key.pem
 ```
 
-## 🎯 Usage Examples
+### Manual Installation
 
-### Auto Error Fix
+1. **Install Dependencies**
+```bash
+cd mcp-ollama
+npm install
+npm run build
+```
+
+2. **Build Extension**
+```bash
+cd vscode-extension
+npm install
+npm run compile
+npx vsce package
+```
+
+3. **Install Extension**
+```bash
+code --install-extension smartcode-aiassist-1.0.2.vsix
+```
+
+## 🚀 Usage
+
+### 1. Start the Server
+```bash
+cd mcp-ollama
+npm start
+```
+Server runs on `http://localhost:3077`
+
+### 2. Configure VS Code
+Open VS Code settings and configure:
 ```json
 {
-  "tool": "auto_error_fix",
-  "params": {
-    "errorMessage": "TypeError: Cannot read property 'name' of undefined",
-    "code": "const user = getUser(); console.log(user.name);",
-    "language": "javascript",
-    "filePath": "src/user.js",
-    "lineNumber": 2
-  }
+  "mcp-ollama.enabled": true,
+  "mcp-ollama.serverUrl": "http://localhost:3077",
+  "mcp-ollama.host": "http://localhost:11434",
+  "mcp-ollama.model": "deepseek-coder-v2:236b"
 }
 ```
 
-### Real-time Diagnostics
+### 3. Available Commands
+
+#### Keyboard Shortcuts
+- `Alt + ]` - Next suggestion
+- `Alt + [` - Previous suggestion  
+- `Ctrl + Enter` - Show alternatives
+- `Tab` - Accept suggestion
+
+#### Command Palette
+- `SmartCode-AIAssist: Enable/Disable`
+- `SmartCode-AIAssist: Explain Code`
+- `SmartCode-AIAssist: Fix Code`
+- `SmartCode-AIAssist: Generate Tests`
+- `SmartCode-AIAssist: Generate Documentation`
+- `SmartCode-AIAssist: Open Chat`
+
+#### Slash Commands (in Chat)
+- `/fix` - Fix code issues
+- `/explain` - Explain selected code
+- `/tests` - Generate unit tests
+- `/docs` - Generate documentation
+- `/optimize` - Optimize performance
+- `/security` - Security scan
+- `/translate [language]` - Translate code
+
+## 🔧 Configuration
+
+### Server Configuration (.env)
+```bash
+OLLAMA_HOST=https://localhost:11434
+OLLAMA_MODEL=deepseek-coder-v2:236b
+OLLAMA_TIMEOUT_MS=120000
+USE_HTTPS=true
+SSL_CERT_PATH=./certs/cert.pem
+SSL_KEY_PATH=./certs/key.pem
+```
+
+### VS Code Settings
 ```json
 {
-  "tool": "diagnose_code",
-  "params": {
-    "code": "function example() { var x = 1; if (x == null) return; }",
-    "language": "javascript",
-    "checkTypes": ["syntax", "style", "security"]
-  }
+  "mcp-ollama.enabled": true,
+  "mcp-ollama.serverUrl": "https://localhost:3077",
+  "mcp-ollama.host": "https://localhost:11434",
+  "mcp-ollama.model": "deepseek-coder-v2:236b",
+  "mcp-ollama.useHttps": true,
+  "mcp-ollama.suggestionDelay": 500,
+  "mcp-ollama.maxSuggestions": 3
 }
 ```
 
-### Code Completion
-```json
-{
-  "tool": "code_completion",
-  "params": {
-    "code": "function calculateTotal(items) {\n  return items.",
-    "language": "javascript",
-    "position": { "line": 1, "character": 15 }
-  }
-}
+## 🤖 Supported Models
+
+### Recommended Models
+- **deepseek-coder-v2:236b** - Best for code completion
+- **codellama:7b-instruct** - Good balance of speed/quality
+- **llama3.1:8b** - General purpose coding
+- **veda-coder-v2:latest** - Specialized for error fixing
+
+### Install Models
+```bash
+ollama pull deepseek-coder-v2:236b
+ollama pull codellama:7b-instruct
+ollama pull llama3.1:8b
 ```
 
-## 🔮 Future Roadmap
+## 🌐 API Endpoints
 
-### Short-term (Next 3 months)
-- **Enhanced Language Support**: Add support for more programming languages
-- **IDE Integration**: Direct integration with popular IDEs (VS Code, IntelliJ)
-- **Custom Error Patterns**: User-defined error pattern recognition
-- **Performance Metrics**: Detailed analytics on fix success rates
+### REST API
+- `GET /health` - Server health check
+- `POST /tools/{toolName}` - Execute MCP tool
+- `POST /stream/completion` - Streaming completion
+- `POST /stream/chat` - Streaming chat
 
-### Medium-term (3-6 months)
-- **Team Collaboration**: Shared error databases and fix templates
-- **Machine Learning**: Improved error prediction and prevention
-- **Code Quality Scoring**: Comprehensive code quality metrics
-- **Integration APIs**: REST and GraphQL APIs for external integrations
+### Available Tools (36 total)
+- `code_completion` - Generate code completions
+- `auto_error_fix` - Fix errors automatically
+- `explain_code` - Explain code functionality
+- `generate_tests` - Create unit tests
+- `security_scan` - Security vulnerability scan
+- `optimize_performance` - Performance optimization
+- `translate_code` - Language translation
+- `inline_suggestion` - Real-time suggestions
+- `chat_assistant` - Interactive chat
+- And 27 more specialized tools...
 
-### Long-term (6+ months)
-- **Multi-model Support**: Support for different AI models beyond Ollama
-- **Cloud Deployment**: Optional cloud-based processing for teams
-- **Advanced Analytics**: Comprehensive development insights and reporting
-- **Plugin Ecosystem**: Extensible plugin architecture for custom tools
+## 🎯 Use Cases
 
-## 🔒 Security Features
+### For Developers
+- **Code Completion** - Faster coding with intelligent suggestions
+- **Error Fixing** - Automatic error detection and resolution
+- **Code Review** - AI-powered code quality analysis
+- **Documentation** - Auto-generate comprehensive docs
+- **Testing** - Create comprehensive test suites
 
-### Implemented Security Measures
-- **Path Traversal Protection**: Validates all file paths to prevent unauthorized access
-- **Log Injection Prevention**: Sanitizes all log inputs to prevent log manipulation
-- **Input Validation**: Comprehensive validation of all user inputs
-- **Secure Error Handling**: Safe error message handling without information leakage
-- **Local Processing**: All AI processing happens locally for privacy
+### For Teams
+- **Consistency** - Enforce coding standards
+- **Knowledge Sharing** - Learn from AI explanations
+- **Productivity** - Reduce development time
+- **Quality** - Improve code quality with AI review
 
-### Security Best Practices
-- Regular security audits and vulnerability assessments
-- Secure coding practices throughout the codebase
-- Comprehensive error handling and logging
-- Input sanitization and validation
-- Principle of least privilege in file system access
+### For Learning
+- **Code Explanation** - Understand complex code
+- **Best Practices** - Learn coding patterns
+- **Language Learning** - Translate between languages
+- **Debugging** - Learn error fixing techniques
 
-## 🐛 Known Issues & Limitations
+## 🔒 Privacy & Security
 
-### Current Limitations
-1. **Model Dependency**: Requires Ollama to be running locally
-2. **Language Coverage**: Some advanced language features may not be fully supported
-3. **Large File Handling**: Performance may degrade with very large files (>5MB)
-4. **Complex Error Chains**: May struggle with deeply nested error dependencies
+- **Local Processing** - All AI runs on your machine
+- **No Data Sharing** - Code never leaves your environment
+- **Offline Capable** - Works without internet
+- **Open Source** - Full transparency
+- **Configurable** - Control what data is processed
 
-### Planned Improvements
-- Enhanced error chain analysis
-- Better handling of large codebases
-- Improved model fallback mechanisms
-- More granular configuration options
+## 🚨 Troubleshooting
+
+### Common Issues
+
+**Extension not working?**
+1. Check server is running: `curl http://localhost:3077/health`
+2. Verify Ollama is running: `ollama list`
+3. Check VS Code Developer Console for errors
+
+**Slow responses?**
+1. Use smaller models (7B instead of 236B)
+2. Increase timeout in settings
+3. Check system resources
+
+**Connection errors?**
+1. Verify port 3077 is available
+2. Check firewall settings
+3. Ensure correct server URL in settings
+
+### Debug Mode
+Enable debug logging:
+```json
+{
+  "mcp-ollama.debug": true
+}
+```
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our contributing guidelines for:
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Issue reporting guidelines
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open Pull Request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- **Ollama Team**: For providing the excellent local AI model infrastructure
-- **MCP Community**: For the Model Context Protocol specification
-- **Open Source Contributors**: For various libraries and tools used in this project
+- **Ollama** - Local AI model runtime
+- **Model Context Protocol** - AI integration standard
+- **VS Code** - Extensible editor platform
+- **GitHub Copilot** - Inspiration for features
 
 ## 📞 Support
 
-For support, please:
-1. Check the documentation and examples
-2. Search existing issues on GitHub
-3. Create a new issue with detailed information
-4. Join our community discussions
+- **Issues**: GitHub Issues
+- **Discussions**: GitHub Discussions
+- **Documentation**: Wiki
+- **Community**: Discord Server
 
 ---
 
-**Built with ❤️ for the developer community**
+**Made with ❤️ for developers who value privacy and local AI**

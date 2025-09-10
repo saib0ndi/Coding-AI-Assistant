@@ -30,7 +30,7 @@ export class Logger {
   }
 
   private scrubString(input: unknown): string {
-    const s = String(input ?? '');
+    const s = String(input != null ? input : '');
     // replace control chars with space, then collapse extra spaces
     return s.replace(Logger.CONTROL, ' ').replace(/\s{2,}/g, ' ').trim();
   }
@@ -73,13 +73,23 @@ export class Logger {
   }
 
   private formatMessage(level: LogLevel, message: string, meta?: unknown): string {
-    const timestamp = new Date().toISOString();
+    const timestamp = this.getTimestamp();
     const ctx = this.scrubString(this.context);
     let msg = this.scrubString(message);
     if (msg.length > Logger.MAX_MSG_LEN) msg = msg.slice(0, Logger.MAX_MSG_LEN) + '…';
     const metaString = this.stringifyMeta(meta);
     // single line output (no CR/LF), safe for grep/ingestion
     return `[${timestamp}] [${level.toUpperCase()}] [${ctx}] ${msg}${metaString}`;
+  }
+
+  private timestampCache = { value: '', lastUpdate: 0 };
+  private getTimestamp(): string {
+    const now = Date.now();
+    if (now - this.timestampCache.lastUpdate > 100) {
+      this.timestampCache.value = new Date(now).toISOString();
+      this.timestampCache.lastUpdate = now;
+    }
+    return this.timestampCache.value;
   }
 
   debug(message: string, meta?: unknown): void {
@@ -89,7 +99,10 @@ export class Logger {
     if (this.shouldLog('info')) console.log(this.formatMessage('info', message, meta));
   }
   warn(message: string, meta?: unknown): void {
-    if (this.shouldLog('warn')) console.warn(this.formatMessage('warn', message, meta));
+    if (this.shouldLog('warn')) {
+      const sanitizedMessage = this.scrubString(message);
+      console.warn(this.formatMessage('warn', sanitizedMessage, meta));
+    }
   }
   error(message: string, meta?: unknown): void {
     if (this.shouldLog('error')) {
@@ -105,6 +118,6 @@ export class Logger {
     this.context = this.scrubString(context);
   }
   createChildLogger(context: string): Logger {
-    return new Logger(this.level, `${this.context}:${this.scrubString(context)}`);
+    return new Logger(this.level, `${this.context}:${context}`);
   }
 }

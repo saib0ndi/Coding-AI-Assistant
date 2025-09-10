@@ -183,7 +183,7 @@ export class ContextManager {
     const allDependencies = await Promise.all(
       dependencyFiles.map(async ({ file, parser }) => {
         try {
-          const filePath = this.validatePath(path.join(projectPath, file), projectPath);
+          const filePath = path.basename(file) === file ? this.validatePath(path.join(projectPath, file), projectPath) : null;
           if (filePath && (await this.fileExists(filePath))) {
             const content = await fs.promises.readFile(filePath, 'utf-8');
             return parser(content);
@@ -220,36 +220,49 @@ export class ContextManager {
 
   private parsePomXml(content: string): string[] {
     const matches = content.match(/<artifactId>([^<]+)<\/artifactId>/g);
-    return matches ? matches.map(m => m.replace(/<\/?artifactId>/g, '')) : [];
+    return matches ? matches.map(m => {
+      const match = m.match(/<artifactId>([^<]+)<\/artifactId>/);
+      return match ? match[1] : '';
+    }).filter(Boolean) : [];
   }
 
   private parseCargoToml(content: string): string[] {
-    const section = content.match(/\[dependencies\]([\s\S]*?)(?=\[|$)/);
-    if (!section) return [];
-    return section[1]
-      .split('\n')
-      .map(line => line.split('=')[0].trim())
-      .filter(dep => dep && !dep.startsWith('#'));
+    try {
+      const section = content.match(/\[dependencies\]([\s\S]*?)(?=\[|$)/);
+      if (!section) return [];
+      return section[1]
+        .split('\n')
+        .map(line => line.split('=')[0].trim())
+        .filter(dep => dep && !dep.startsWith('#'));
+    } catch (error) {
+      console.warn('Failed to parse Cargo.toml:', this.sanitizeLogInput(String(error)));
+      return [];
+    }
   }
 
   private parseGoMod(content: string): string[] {
-    const deps: string[] = [];
+    try {
+      const deps: string[] = [];
 
-    // single-line requires: `require module@v` or `require module v`
-    for (const m of content.matchAll(/^require\s+([^\s@]+)(?:@|\s)/gm)) {
-      deps.push(m[1]);
-    }
-
-    // block form:
-    const block = content.match(/require\s*\(([\s\S]*?)\)/m);
-    if (block) {
-      for (const line of block[1].split('\n')) {
-        const m = line.trim().match(/^([^\s@]+)(?:@|\s)/);
-        if (m) deps.push(m[1]);
+      // single-line requires: `require module@v` or `require module v`
+      for (const m of content.matchAll(/^require\s+([^\s@]+)(?:@|\s)/gm)) {
+        deps.push(m[1]);
       }
-    }
 
-    return [...new Set(deps)];
+      // block form:
+      const block = content.match(/require\s*\(([\s\S]*?)\)/m);
+      if (block) {
+        for (const line of block[1].split('\n')) {
+          const m = line.trim().match(/^([^\s@]+)(?:@|\s)/);
+          if (m) deps.push(m[1]);
+        }
+      }
+
+      return [...new Set(deps)];
+    } catch (error) {
+      console.warn('Failed to parse go.mod:', this.sanitizeLogInput(String(error)));
+      return [];
+    }
   }
 
   private async getGitContext(
@@ -267,10 +280,12 @@ export class ContextManager {
       if (stat.isFile()) {
         try {
           const gitfile = await fs.promises.readFile(gitDir, 'utf-8');
-          const m = gitfile.match(/gitdir:\s*(.+)\s*$/i);
-          if (m) {
-            const resolved = this.validatePath(path.join(path.dirname(gitDir), m[1]), projectPath);
-            if (resolved) gitRoot = resolved;
+          const m = gitfile.match(/gitdir:\s*([a-zA-Z0-9_/.\-]+)\s*$/i);
+          if (m && !m[1].includes('..')) {
+            const resolved = path.resolve(path.dirname(gitDir), m[1]);
+            if (resolved.startsWith(path.resolve(projectPath))) {
+              gitRoot = resolved;
+            }
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -281,11 +296,12 @@ export class ContextManager {
       // Determine branch or detached HEAD
       let branch = 'main';
       try {
-        const headPath = this.validatePath(path.join(gitRoot, 'HEAD'), projectPath);
-        if (headPath) {
+        const headPath = path.join(gitRoot, 'HEAD');
+        // Validate HEAD path is within git directory
+        if (path.resolve(headPath).startsWith(path.resolve(gitRoot))) {
           const headContent = await fs.promises.readFile(headPath, 'utf-8');
-          const branchMatch = headContent.match(/ref:\s*refs\/heads\/(.+)/);
-          branch = branchMatch ? branchMatch[1].trim() : headContent.trim().slice(0, 12); // short SHA if detached
+          const branchMatch = headContent.match(/ref:\s*refs\/heads\/([a-zA-Z0-9_/-]+)/);
+          branch = branchMatch ? branchMatch[1].trim().replace(/[^a-zA-Z0-9_/-]/g, '') : 'detached';
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -330,7 +346,7 @@ export class ContextManager {
   }
 
   private sanitizeLogInput(input: unknown): string {
-    return String(input ?? '')
+    return String(input != null ? input : '')
       .replace(/[\r\n\t]/g, ' ')
       .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
       .replace(/\s{2,}/g, ' ')
@@ -344,7 +360,7 @@ export class ContextManager {
   getCacheStats(): { size: number; keys: string[] } {
     return {
       size: this.contextCache.size,
-      keys: Array.from(this.contextCache.keys()),
+      keys: Array.from(this.contextCache.keys()).map(key => this.sanitizeLogInput(key)),
     };
   }
 }
