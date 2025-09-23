@@ -1,0 +1,254 @@
+{
+  "name": "smartcode-aiassist",
+  "displayName": "SmartCode-AIAssist",
+  "description": "AI-powered code assistance using local Ollama models",
+  "version": "1.0.10",
+  "publisher": "saibondi",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "MCP-Ollama",
+      "properties": {
+        "mcp-ollama.enableTelemetry": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable anonymous usage telemetry to improve the extension"
+        },
+        "mcp-ollama.maxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of retry attempts for failed requests"
+        },
+        "mcp-ollama.retryDelay": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Delay between retry attempts in milliseconds"
+        },
+        "mcp-ollama.chatHistoryLimit": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "Maximum number of chat messages to keep in history"
+        },
+        "mcp-ollama.rateLimitDelay": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "Minimum delay between requests in milliseconds"
+        },
+        "mcp-ollama.autoSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save chat history"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "mcp-ollama.enable",
+        "title": "Enable SmartCode-AIAssist"
+      },
+      {
+        "command": "mcp-ollama.disable",
+        "title": "Disable SmartCode-AIAssist"
+      },
+      {
+        "command": "mcp-ollama.explain",
+        "title": "Explain Code"
+      },
+      {
+        "command": "mcp-ollama.fix",
+        "title": "Fix Code"
+      },
+      {
+        "command": "mcp-ollama.tests",
+        "title": "Generate Tests"
+      },
+      {
+        "command": "mcp-ollama.docs",
+        "title": "Generate Documentation"
+      },
+      {
+        "command": "mcp-ollama.openChat",
+        "title": "Open SmartCode-AIAssist Chat"
+      },
+      {
+        "command": "mcp-ollama.showChatPanel",
+        "title": "Show Chat Panel"
+      },
+      {
+        "command": "mcp-ollama.showStats",
+        "title": "Show Usage Statistics"
+      },
+      {
+        "command": "mcp-ollama.logAcceptance",
+        "title": "Log Suggestion Acceptance"
+      },
+      {
+        "command": "mcp-ollama.generateFunction",
+        "title": "Generate Function"
+      },
+      {
+        "command": "mcp-ollama.generateClass",
+        "title": "Generate Class"
+      },
+      {
+        "command": "mcp-ollama.openLabs",
+        "title": "Open Copilot Labs"
+      },
+      {
+        "command": "mcp-ollama.analyzeAST",
+        "title": "Analyze Code Structure"
+      },
+      {
+        "command": "mcp-ollama.exportHistory",
+        "title": "Export Chat History"
+      },
+      {
+        "command": "mcp-ollama.importHistory",
+        "title": "Import Chat History"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mcp-ollama.nextSuggestion",
+        "key": "alt+]",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.previousSuggestion",
+        "key": "alt+[",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.alternatives",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.acceptSuggestion",
+        "key": "tab",
+        "when": "editorTextFocus && mcp-ollama.suggestionVisible"
+      }
+    ],
+    "configuration": {
+      "title": "SmartCode-AIAssist",
+      "properties": {
+        "mcp-ollama.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable SmartCode-AIAssist suggestions"
+        },
+        "mcp-ollama.host": {
+          "type": "string",
+          "default": "https://localhost:11434",
+          "description": "Ollama server host"
+        },
+        "mcp-ollama.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3077",
+          "description": "MCP server URL"
+        },
+        "mcp-ollama.serverPath": {
+          "type": "string",
+          "default": "http://localhost:3077",
+          "description": "MCP server path"
+        },
+        "mcp-ollama.model": {
+          "type": "string",
+          "default": "codellama:7b-instruct",
+          "description": "Ollama model to use"
+        },
+        "mcp-ollama.useHttps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use HTTPS for secure connections"
+        },
+        "mcp-ollama.suggestionDelay": {
+          "type": "number",
+          "default": 500,
+          "description": "Delay before showing suggestions (ms)"
+        },
+        "mcp-ollama.maxSuggestions": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of suggestions"
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mcp-ollama.explain",
+          "when": "editorHasSelection",
+          "group": "smartcode@1"
+        },
+        {
+          "command": "mcp-ollama.fix",
+          "when": "editorHasSelection",
+          "group": "smartcode@2"
+        },
+        {
+          "command": "mcp-ollama.tests",
+          "when": "editorHasSelection",
+          "group": "smartcode@3"
+        },
+        {
+          "command": "mcp-ollama.docs",
+          "when": "editorHasSelection",
+          "group": "smartcode@4"
+        },
+        {
+          "command": "mcp-ollama.openChat",
+          "group": "smartcode@5"
+        },
+        {
+          "command": "mcp-ollama.generateFunction",
+          "group": "smartcode@6"
+        },
+        {
+          "command": "mcp-ollama.generateClass",
+          "group": "smartcode@7"
+        },
+        {
+          "command": "mcp-ollama.openLabs",
+          "group": "smartcode@8"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/node-fetch": "^2.6.2",
+    "@types/vscode": "^1.103.0",
+    "typescript": "^4.9.4",
+    "vsce": "^2.15.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "node-fetch": "^2.6.7",
+    "axios": "^0.27.2"
+  }
+}
