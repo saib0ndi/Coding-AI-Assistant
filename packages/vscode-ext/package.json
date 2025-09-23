@@ -1,0 +1,64 @@
+{
+  "name": "coding-ai-assistant",
+  "displayName": "Coding AI Assistant",
+  "publisher": "saibondi",
+  "version": "0.0.3",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onCommand:aiassist.setToken",
+    "onCommand:aiassist.setToken",
+    "onCommand:aiassist.proposeEdit"
+  ],
+  "main": "dist/extension/index.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiassist.open",
+        "title": "AI Assist: Open Panel"
+      },
+      {
+        "command": "aiassist.setToken",
+        "title": "AI Assist: Set API Token (secure)"
+      },
+      {
+        "command": "aiassist.proposeEdit",
+        "title": "AI Assist: Propose Next Edit"
+      }
+    ],
+    "configuration": {
+      "title": "Coding AI Assistant",
+      "properties": {
+        "codingAiAssistant.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3002",
+          "description": "Orchestrator base URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "pnpm compile",
+    "dev": "tsc -w",
+    "compile": "tsc -p .",
+    "package": "vsce package --no-yarn --out dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.2"
+  },
+  "files": [
+    "dist/**",
+    "images/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/your/repo.git"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ollama-enhanced": {
+      "command": "node",
+      "args": ["/home/saibondi/Documents/Coding-AI-Assistant/mcp-ollama/dist/index.js"]
+    }
+  }
+}
