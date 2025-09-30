@@ -5,7 +5,7 @@ import { InlineCompletionProvider } from './inlineCompletionProvider';
 import { CopilotChatProvider } from './copilotChatProvider';
 import { StreamingClient } from './streamingClient';
 import { WorkspaceAnalyzer } from './workspaceAnalyzer';
-import { CopilotUI } from './copilotUI';
+import { ChatUI } from './chatUI';
 import { TelemetryManager } from './telemetryManager';
 import { ContextAnalyzer } from './contextAnalyzer';
 import { MultiLineGenerator } from './multiLineGenerator';
@@ -19,7 +19,7 @@ let inlineCompletionProvider: InlineCompletionProvider | undefined;
 let chatProvider: CopilotChatProvider | undefined;
 let streamingClient: StreamingClient | undefined;
 let workspaceAnalyzer: WorkspaceAnalyzer | undefined;
-let copilotUI: CopilotUI | undefined;
+let chatUI: ChatUI | undefined;
 let telemetryManager: TelemetryManager | undefined;
 let contextAnalyzer: ContextAnalyzer | undefined;
 let multiLineGenerator: MultiLineGenerator | undefined;
@@ -49,7 +49,7 @@ export async function activate(context: vscode.ExtensionContext) {
         chatProvider = new CopilotChatProvider(mcpClient);
         streamingClient = new StreamingClient(mcpClient);
         workspaceAnalyzer = new WorkspaceAnalyzer(mcpClient);
-        copilotUI = new CopilotUI(mcpClient);
+        chatUI = new ChatUI(context);
 
         // Register inline completion providers
         const completionProvider = vscode.languages.registerInlineCompletionItemProvider(
@@ -65,6 +65,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // Register chat provider with proper error handling
         let chatProviderRegistration: vscode.ChatParticipant | undefined;
         try {
+            // Register chat participant
             chatProviderRegistration = vscode.chat.createChatParticipant(
                 'smartcode-aiassist',
                 chatProvider.handleChatRequest.bind(chatProvider)
@@ -376,24 +377,10 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
             }),
 
-            vscode.commands.registerCommand('mcp-ollama.openChat', () => {
-                try {
-                    if (copilotUI) {
-                        copilotUI.showChatPanel();
-                    } else {
-                        vscode.window.showErrorMessage('Copilot UI not initialized');
-                    }
-                } catch (error) {
-                    const errorMsg = `Failed to open chat: ${error instanceof Error ? error.message : 'Unknown error'}`;
-                    vscode.window.showErrorMessage(errorMsg);
-                    outputChannel.appendLine(`Error: ${errorMsg}`);
-                }
-            }),
-
             vscode.commands.registerCommand('mcp-ollama.showChatPanel', () => {
                 try {
-                    if (copilotUI) {
-                        copilotUI.showChatPanel();
+                    if (chatUI) {
+                        chatUI.show();
                         vscode.window.showInformationMessage('Chat panel opened!');
                     } else {
                         vscode.window.showErrorMessage('Extension not properly initialized');
@@ -414,7 +401,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     suggestionProvider: suggestionProvider ? 'initialized' : 'not initialized',
                     inlineCompletionProvider: inlineCompletionProvider ? 'initialized' : 'not initialized',
                     chatProvider: chatProvider ? 'initialized' : 'not initialized',
-                    copilotUI: copilotUI ? 'initialized' : 'not initialized',
+                    chatUI: chatUI ? 'initialized' : 'not initialized',
                     telemetryManager: telemetryManager ? 'initialized' : 'not initialized'
                 };
                 
@@ -504,6 +491,121 @@ export async function activate(context: vscode.ExtensionContext) {
                 const symbols = astParser.getAvailableSymbols(ast, editor.selection.active);
                 
                 vscode.window.showInformationMessage(`Found ${symbols.length} symbols: ${symbols.slice(0, 5).join(', ')}`);
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.optimizeCode', async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || !mcpClient) return;
+                
+                const selection = editor.selection;
+                const code = editor.document.getText(selection.isEmpty ? undefined : selection);
+                const language = editor.document.languageId;
+                
+                if (!code.trim()) {
+                    vscode.window.showWarningMessage('No code selected');
+                    return;
+                }
+                
+                try {
+                    await mcpClient.connect();
+                    const result = await mcpClient.handleSlashCommand('/optimize', code, language);
+                    
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: `Performance Optimization:\n\n${result}`,
+                        language: 'markdown'
+                    });
+                    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                } catch (error) {
+                    vscode.window.showErrorMessage('Optimization failed');
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.securityScan', async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || !mcpClient) return;
+                
+                const selection = editor.selection;
+                const code = editor.document.getText(selection.isEmpty ? undefined : selection);
+                const language = editor.document.languageId;
+                
+                if (!code.trim()) {
+                    vscode.window.showWarningMessage('No code selected');
+                    return;
+                }
+                
+                try {
+                    await mcpClient.connect();
+                    const result = await mcpClient.handleSlashCommand('/security', code, language);
+                    
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: `Security Scan Results:\n\n${result}`,
+                        language: 'markdown'
+                    });
+                    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                } catch (error) {
+                    vscode.window.showErrorMessage('Security scan failed');
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.translateCode', async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || !mcpClient) return;
+                
+                const selection = editor.selection;
+                const code = editor.document.getText(selection.isEmpty ? undefined : selection);
+                const language = editor.document.languageId;
+                
+                if (!code.trim()) {
+                    vscode.window.showWarningMessage('No code selected');
+                    return;
+                }
+                
+                const targetLang = await vscode.window.showQuickPick(
+                    ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'cpp'],
+                    { placeHolder: 'Select target language' }
+                );
+                
+                if (!targetLang) return;
+                
+                try {
+                    await mcpClient.connect();
+                    const result = await mcpClient.handleSlashCommand(`/translate ${targetLang}`, code, language);
+                    
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: result,
+                        language: targetLang
+                    });
+                    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                } catch (error) {
+                    vscode.window.showErrorMessage('Code translation failed');
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.codeReview', async () => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || !mcpClient) return;
+                
+                const selection = editor.selection;
+                const code = editor.document.getText(selection.isEmpty ? undefined : selection);
+                const language = editor.document.languageId;
+                
+                if (!code.trim()) {
+                    vscode.window.showWarningMessage('No code selected');
+                    return;
+                }
+                
+                try {
+                    await mcpClient.connect();
+                    const result = await mcpClient.handleSlashCommand('/review', code, language);
+                    
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: `Code Review:\n\n${result}`,
+                        language: 'markdown'
+                    });
+                    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                } catch (error) {
+                    vscode.window.showErrorMessage('Code review failed');
+                }
             })
         ];
 
@@ -530,10 +632,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
         context.subscriptions.push(...disposables);
 
-        // Initialize MCP connection with retry logic
-        await initializeMCPConnection();
-
-        outputChannel.appendLine('Extension activation completed successfully');
+        // Skip MCP connection during activation to prevent fetch errors
+        outputChannel.appendLine('Extension activation completed successfully (MCP connection will be established on first use)');
         vscode.window.showInformationMessage('MCP-Ollama Copilot activated successfully');
 
     } catch (error) {
@@ -559,7 +659,7 @@ export async function deactivate() {
         }
 
         // Dispose all services that have dispose methods
-        const disposableServices = [suggestionProvider, chatProvider, streamingClient, workspaceAnalyzer, copilotUI];
+        const disposableServices = [suggestionProvider, chatProvider, streamingClient, workspaceAnalyzer, chatUI];
         
         for (const service of disposableServices) {
             if (service && 'dispose' in service && typeof service.dispose === 'function') {
@@ -605,7 +705,7 @@ export async function deactivate() {
         chatProvider = undefined;
         streamingClient = undefined;
         workspaceAnalyzer = undefined;
-        copilotUI = undefined;
+        chatUI = undefined;
         telemetryManager = undefined;
         contextAnalyzer = undefined;
         multiLineGenerator = undefined;
@@ -629,10 +729,14 @@ async function fileExists(path: string): Promise<boolean> {
 
 function getTestFileName(originalFileName: string, language: string): string {
     const path = require('path');
-    const ext = path.extname(originalFileName);
-    const baseName = path.basename(originalFileName, ext);
     
-    switch (language) {
+    // Sanitize input to prevent path traversal
+    const sanitizedFileName = path.basename(originalFileName);
+    const ext = path.extname(sanitizedFileName);
+    const baseName = path.basename(sanitizedFileName, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedLanguage = language.replace(/[^a-zA-Z]/g, '');
+    
+    switch (sanitizedLanguage) {
         case 'javascript':
         case 'typescript':
             return `${baseName}.test${ext}`;

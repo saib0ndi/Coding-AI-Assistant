@@ -28,7 +28,15 @@ export class CopilotLabs {
         this.panel.webview.html = this.getLabsHTML();
         
         this.panel.webview.onDidReceiveMessage(async (message) => {
-            await this.handleLabsMessage(message);
+            try {
+                await this.handleLabsMessage(message);
+            } catch (error) {
+                console.error('Error handling labs message:', error);
+                this.panel?.webview.postMessage({
+                    command: 'error',
+                    message: error instanceof Error ? error.message : 'Unknown error occurred'
+                });
+            }
         });
 
         this.panel.onDidDispose(() => {
@@ -385,50 +393,68 @@ export class CopilotLabs {
     }
 
     private async handleLabsMessage(message: any) {
-        try {
-            switch (message.command) {
-                case 'applyBrush':
-                    const brushResult = await this.applyCodeBrush(message.brushType, message.code);
-                    this.panel?.webview.postMessage({
-                        command: 'brushResult',
-                        result: brushResult
-                    });
-                    break;
+        if (!message || !message.command) {
+            throw new Error('Invalid message format');
+        }
 
-                case 'translateCode':
-                    const translateResult = await this.translateCode(message.code, message.fromLang, message.toLang);
-                    this.panel?.webview.postMessage({
-                        command: 'translateResult',
-                        result: translateResult
-                    });
-                    break;
+        switch (message.command) {
+            case 'applyBrush':
+                if (!message.brushType || !message.code) {
+                    throw new Error('Missing brush type or code');
+                }
+                const brushResult = await this.applyCodeBrush(message.brushType, message.code);
+                this.panel?.webview.postMessage({
+                    command: 'brushResult',
+                    result: brushResult
+                });
+                break;
 
-                case 'explainCode':
-                    const explainResult = await this.explainCode(message.code, message.level);
-                    this.panel?.webview.postMessage({
-                        command: 'explainResult',
-                        result: explainResult
-                    });
-                    break;
+            case 'translateCode':
+                if (!message.code || !message.fromLang || !message.toLang) {
+                    throw new Error('Missing translation parameters');
+                }
+                const translateResult = await this.translateCode(message.code, message.fromLang, message.toLang);
+                this.panel?.webview.postMessage({
+                    command: 'translateResult',
+                    result: translateResult
+                });
+                break;
 
-                case 'generateQuery':
-                    const queryResult = await this.generateDatabaseQuery(message.description, message.dbType, message.queryType);
-                    this.panel?.webview.postMessage({
-                        command: 'dbResult',
-                        result: queryResult
-                    });
-                    break;
+            case 'explainCode':
+                if (!message.code || !message.level) {
+                    throw new Error('Missing code or explanation level');
+                }
+                const explainResult = await this.explainCode(message.code, message.level);
+                this.panel?.webview.postMessage({
+                    command: 'explainResult',
+                    result: explainResult
+                });
+                break;
 
-                case 'generateIaC':
-                    const iacResult = await this.generateInfrastructureCode(message.description, message.platform);
-                    this.panel?.webview.postMessage({
-                        command: 'iacResult',
-                        result: iacResult
-                    });
-                    break;
-            }
-        } catch (error) {
-            console.error('Labs message error:', error);
+            case 'generateQuery':
+                if (!message.description || !message.dbType || !message.queryType) {
+                    throw new Error('Missing query generation parameters');
+                }
+                const queryResult = await this.generateDatabaseQuery(message.description, message.dbType, message.queryType);
+                this.panel?.webview.postMessage({
+                    command: 'dbResult',
+                    result: queryResult
+                });
+                break;
+
+            case 'generateIaC':
+                if (!message.description || !message.platform) {
+                    throw new Error('Missing infrastructure generation parameters');
+                }
+                const iacResult = await this.generateInfrastructureCode(message.description, message.platform);
+                this.panel?.webview.postMessage({
+                    command: 'iacResult',
+                    result: iacResult
+                });
+                break;
+
+            default:
+                throw new Error(`Unknown command: ${message.command}`);
         }
     }
 

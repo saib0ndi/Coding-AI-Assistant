@@ -1,57 +1,28 @@
 export class CacheManager {
-  private cache = new Map<string, { value: any; expires: number }>();
-  private readonly maxSize: number;
-  private readonly ttl: number;
-  private lastCleanup = 0;
-  private readonly cleanupInterval = 300000; // 5 minutes
-
-  constructor(maxSize: number = Number(process.env.CACHE_MAX_SIZE || 10000), dbPath?: string) {
-    this.maxSize = maxSize;
-    this.ttl = 3600000; // 1 hour default
-  }
-
-  private cleanupExpired(): void {
-    const now = Date.now();
-    if (now - this.lastCleanup < this.cleanupInterval) return;
-    
-    for (const [key, item] of this.cache.entries()) {
-      if (now > item.expires) {
-        this.cache.delete(key);
-      }
-    }
-    this.lastCleanup = now;
-  }
+  private cache = new Map<string, { value: any; expires?: number }>();
 
   get(key: string): any {
-    this.cleanupExpired();
-    const item = this.cache.get(key);
-    if (!item) return null;
+    const entry = this.cache.get(key);
+    if (!entry) return null;
     
-    if (Date.now() > item.expires) {
+    if (entry.expires && Date.now() > entry.expires) {
       this.cache.delete(key);
       return null;
     }
     
-    return item.value;
+    return entry.value;
   }
 
-  set(key: string, value: any, customTtl?: number): void {
-    this.cleanupExpired();
-    const ttl = customTtl || this.ttl;
-    const expires = Date.now() + ttl;
-    
-    this.cache.set(key, { value, expires });
-    
-    if (this.cache.size > this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) {
-        this.cache.delete(firstKey);
-      }
+  set(key: string, value: any, ttl?: number): void {
+    const entry: { value: any; expires?: number } = { value };
+    if (ttl) {
+      entry.expires = Date.now() + ttl;
     }
+    this.cache.set(key, entry);
   }
 
-  delete(key: string): void {
-    this.cache.delete(key);
+  delete(key: string): boolean {
+    return this.cache.delete(key);
   }
 
   clear(): void {
@@ -59,10 +30,10 @@ export class CacheManager {
   }
 
   has(key: string): boolean {
-    const item = this.cache.get(key);
-    if (!item) return false;
+    const entry = this.cache.get(key);
+    if (!entry) return false;
     
-    if (Date.now() > item.expires) {
+    if (entry.expires && Date.now() > entry.expires) {
       this.cache.delete(key);
       return false;
     }
@@ -71,12 +42,13 @@ export class CacheManager {
   }
 
   size(): number {
-    this.cleanupExpired();
-    let validCount = 0;
+    // Clean expired entries first
     const now = Date.now();
-    for (const item of this.cache.values()) {
-      if (now <= item.expires) validCount++;
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.expires && now > entry.expires) {
+        this.cache.delete(key);
+      }
     }
-    return validCount;
+    return this.cache.size;
   }
 }

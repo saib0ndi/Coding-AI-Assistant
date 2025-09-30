@@ -18,3 +18,24 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# SSL Certificates and sensitive files
+certs/*.pem
+certs/*.key
+certs/*.crt
+*.pem
+*.key
+*.crt
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache

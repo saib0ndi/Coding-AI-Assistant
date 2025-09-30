@@ -127,6 +127,23 @@ export class OllamaProvider implements AIProvider {
   return data.response || '';
 }
 
+async generateTextWithModel({
+  prompt,
+  model,
+  stream = false,
+}: {
+  prompt: string;
+  model: string;
+  stream?: boolean;
+}): Promise<string> {
+  const data = await this.callOllama({
+    model: model,
+    prompt,
+    stream,
+  });
+  return data.response || '';
+}
+
 
   async healthCheck(): Promise<boolean> {
     try {
@@ -279,6 +296,28 @@ Explain what this code does, how it works, and any important details:`;
     }
   }
 
+  async explainCodeWithModel(code: string, language: string, model: string): Promise<string> {
+    try {
+      const prompt = `You are a helpful coding assistant. Explain the following ${language} code in a clear, conversational way without using markdown symbols, asterisks, or special formatting characters. Write like you're explaining to a colleague:
+
+${code}
+
+Explain what this code does, how it works, and any important details:`;
+      
+      const response = await this.callOllama({
+        model: model,
+        prompt,
+        stream: false,
+      });
+
+      return this.formatGracefulResponse(response?.response || 'Failed to explain code');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Code explanation failed:', errorMessage);
+      return `Error explaining code: ${errorMessage}`;
+    }
+  }
+
   async generateErrorFixes(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): Promise<CodeFix[]> {
     try {
       const prompt = this.buildErrorFixPrompt(request, errorAnalysis);
@@ -297,12 +336,46 @@ Explain what this code does, how it works, and any important details:`;
     }
   }
 
+  async generateErrorFixesWithModel(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis, model: string): Promise<CodeFix[]> {
+    try {
+      const prompt = this.buildErrorFixPrompt(request, errorAnalysis);
+      
+      const response = await this.callOllama({
+        model: model,
+        prompt,
+        stream: false,
+      });
+
+      return this.parseErrorFixResponse(response, request);
+    } catch (error) {
+      console.error('Error fix generation failed:', error);
+      return this.generateFallbackFix(request, errorAnalysis);
+    }
+  }
+
   async generateQuickFixes(request: QuickFixRequest): Promise<any[]> {
     try {
       const prompt = this.buildQuickFixPrompt(request);
       
       const response = await this.callOllama({
         model: this.config.model,
+        prompt,
+        stream: false,
+      });
+
+      return this.parseQuickFixResponse(response);
+    } catch (error) {
+      console.error('Quick fix generation failed:', error);
+      return [];
+    }
+  }
+
+  async generateQuickFixesWithModel(request: QuickFixRequest, model: string): Promise<any[]> {
+    try {
+      const prompt = this.buildQuickFixPrompt(request);
+      
+      const response = await this.callOllama({
+        model: model,
         prompt,
         stream: false,
       });
@@ -333,6 +406,31 @@ Explain what this code does, how it works, and any important details:`;
         explanation: `Validation failed: ${error}`,
         potentialIssues: ['Validation process failed'],
         semanticPreservation: false,
+        testResults: []
+      };
+    }
+  }
+
+  async validateCodeFixWithModel(request: ValidationRequest, model: string): Promise<any> {
+    try {
+      const prompt = this.buildValidationPrompt(request);
+      
+      const response = await this.callOllama({
+        model: model,
+        prompt,
+        stream: false,
+      });
+
+      return this.parseValidationResponse(response);
+    } catch (error) {
+      console.error('Code fix validation failed:', error);
+      return {
+        isValid: false,
+        confidence: 0,
+        explanation: `Validation failed: ${error}`,
+        potentialIssues: ['Validation process failed'],
+        semanticPreservation: false,
+        testResults: []
       };
     }
   }
@@ -675,7 +773,7 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
     return this.config.model;
   }
 
-  private generateFallbackFix(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): CodeFix[] {
+  generateFallbackFix(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): CodeFix[] {
     const fallbackFixes: Record<string, string> = {
       'undefined_variable': `// Declare the variable
 let ${(() => { const match = request.errorMessage.match(/\w+/); return match ? match[0] : 'variable'; })()} = null;

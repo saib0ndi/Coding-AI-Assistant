@@ -162,10 +162,12 @@ export class ErrorAnalyzer {
   /* ------------------------------ Private ------------------------------ */
 
   private oneLine(s: unknown): string {
-    return String(s != null ? s : '').replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    return String(s != null ? s : '').replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s{2,}/g, ' ').trim().substring(0, 200);
   }
   private safeLog(level: 'info'|'warn'|'error', msg: string, err?: unknown) {
-    const line = `[ErrorAnalyzer] ${msg}${err ? `: ${this.oneLine(((err as Error) && (err as Error).message) || String(err))}` : ''}`;
+    const sanitizedMsg = msg.replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, ' ');
+    const sanitizedErr = err ? this.oneLine(((err as Error) && (err as Error).message) || String(err)) : '';
+    const line = `[ErrorAnalyzer] ${sanitizedMsg}${sanitizedErr ? `: ${sanitizedErr}` : ''}`;
     if (level === 'info')  console.log(line);
     if (level === 'warn')  console.warn(line);
     if (level === 'error') console.error(line);
@@ -564,14 +566,10 @@ export class ErrorAnalyzer {
         const usageRe = new RegExp(`\\b${varName}\\b`, 'g');
         let used = false;
 
-        // scan all code once; if we want faster, we can scan only lines after declaration.
-        let um: RegExpExecArray | null;
-        while ((um = usageRe.exec(code))) {
-          const pos = um.index;
-          // ignore the exact declaration token occurrence (best effort)
-          // Safe variable analysis without code execution
-        const declPos = -1; // Disabled unsafe indexOf operation
-          if (pos !== declPos) { used = true; break; }
+        // Safe variable analysis without code execution
+        const codeAfterDecl = code.substring(code.indexOf(line) + line.length);
+        if (codeAfterDecl.includes(varName)) {
+          used = true;
         }
 
         if (!used) {

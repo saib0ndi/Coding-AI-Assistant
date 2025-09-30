@@ -49,12 +49,17 @@ runTest('Build Artifacts', () => {
 
 // Test 3: Environment Configuration
 runTest('Environment Config', () => {
-  const envContent = fs.readFileSync('.env.example', 'utf8');
-  const requiredVars = [
-    'OLLAMA_HOST', 'MCP_SERVER_PORT', 'USE_HTTPS', 
-    'BASE_CONTEXT_LINES', 'MEMORY_THRESHOLD', 'SERVER_VERSION'
-  ];
-  return requiredVars.every(v => envContent.includes(v));
+  try {
+    const envContent = fs.readFileSync('.env.example', 'utf8');
+    const requiredVars = [
+      'OLLAMA_HOST', 'MCP_SERVER_PORT', 'USE_HTTPS', 
+      'BASE_CONTEXT_LINES', 'MEMORY_THRESHOLD', 'SERVER_VERSION'
+    ];
+    return requiredVars.every(v => envContent.includes(v));
+  } catch (error) {
+    console.warn('Could not read .env.example:', error.message);
+    return false;
+  }
 });
 
 // Test 4: Dynamic Configuration
@@ -68,15 +73,25 @@ runTest('Dynamic Config Class', () => {
 
 // Test 5: Package Dependencies
 runTest('Package Dependencies', () => {
-  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  const requiredDeps = ['@modelcontextprotocol/sdk', 'dotenv', 'node-fetch', 'zod'];
-  return requiredDeps.every(dep => pkg.dependencies[dep]);
+  try {
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    const requiredDeps = ['@modelcontextprotocol/sdk', 'dotenv', 'node-fetch', 'zod'];
+    return requiredDeps.every(dep => pkg.dependencies[dep]);
+  } catch (error) {
+    console.warn('Could not read package.json:', error.message);
+    return false;
+  }
 });
 
 // Test 6: VS Code Extension
 runTest('VS Code Extension', () => {
-  const extPkg = JSON.parse(fs.readFileSync('vscode-extension/package.json', 'utf8'));
-  return extPkg.contributes && extPkg.contributes.configuration;
+  try {
+    const extPkg = JSON.parse(fs.readFileSync('vscode-extension/package.json', 'utf8'));
+    return extPkg.contributes && extPkg.contributes.configuration;
+  } catch (error) {
+    console.warn('Could not read extension package.json:', error.message);
+    return false;
+  }
 });
 
 // Test 7: SSL Certificates
@@ -91,9 +106,13 @@ runTest('No Hardcoded Values', () => {
   
   files.forEach(file => {
     if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, 'utf8');
-      const matches = content.match(/process\.env\./g);
-      if (matches) processEnvCount += matches.length;
+      try {
+        const content = fs.readFileSync(file, 'utf8');
+        const matches = content.match(/process\.env\./g);
+        if (matches) processEnvCount += matches.length;
+      } catch (error) {
+        console.warn(`Could not read ${file}:`, error.message);
+      }
     }
   });
   

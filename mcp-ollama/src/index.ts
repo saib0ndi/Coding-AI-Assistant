@@ -29,10 +29,18 @@ async function main() {
     // Fetch available models from Ollama server
     const fetchAvailableModels = async (host: string): Promise<ModelConfig[]> => {
       try {
-        const response = await fetch(`${host}/api/tags`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), parseTimeout(process.env.OLLAMA_TIMEOUT_MS));
+        
+        const response = await fetch(`${host}/api/tags`, {
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
-        const data = await response.json();
+        const data = await response.json() as { models?: any[] };
         const models = data.models || [];
         
         return models.map((model: any) => ({

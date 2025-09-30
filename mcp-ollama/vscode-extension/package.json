@@ -2,10 +2,10 @@
   "name": "smartcode-aiassist",
   "displayName": "SmartCode-AIAssist",
   "description": "AI-powered code assistance using local Ollama models",
-  "version": "1.0.10",
+  "version": "2.7.3",
   "publisher": "saibondi",
   "engines": {
-    "vscode": "^1.103.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
@@ -15,135 +15,26 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "MCP-Ollama",
-      "properties": {
-        "mcp-ollama.enableTelemetry": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable anonymous usage telemetry to improve the extension"
-        },
-        "mcp-ollama.maxRetries": {
-          "type": "number",
-          "default": 3,
-          "minimum": 1,
-          "maximum": 10,
-          "description": "Maximum number of retry attempts for failed requests"
-        },
-        "mcp-ollama.retryDelay": {
-          "type": "number",
-          "default": 1000,
-          "minimum": 100,
-          "maximum": 10000,
-          "description": "Delay between retry attempts in milliseconds"
-        },
-        "mcp-ollama.chatHistoryLimit": {
-          "type": "number",
-          "default": 100,
-          "minimum": 10,
-          "maximum": 1000,
-          "description": "Maximum number of chat messages to keep in history"
-        },
-        "mcp-ollama.rateLimitDelay": {
-          "type": "number",
-          "default": 500,
-          "minimum": 100,
-          "maximum": 5000,
-          "description": "Minimum delay between requests in milliseconds"
-        },
-        "mcp-ollama.autoSave": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically save chat history"
-        }
-      }
-    },
-    "commands": [
+    "chatParticipants": [
       {
-        "command": "mcp-ollama.enable",
-        "title": "Enable SmartCode-AIAssist"
-      },
-      {
-        "command": "mcp-ollama.disable",
-        "title": "Disable SmartCode-AIAssist"
-      },
-      {
-        "command": "mcp-ollama.explain",
-        "title": "Explain Code"
-      },
-      {
-        "command": "mcp-ollama.fix",
-        "title": "Fix Code"
-      },
-      {
-        "command": "mcp-ollama.tests",
-        "title": "Generate Tests"
-      },
-      {
-        "command": "mcp-ollama.docs",
-        "title": "Generate Documentation"
-      },
-      {
-        "command": "mcp-ollama.openChat",
-        "title": "Open SmartCode-AIAssist Chat"
-      },
-      {
-        "command": "mcp-ollama.showChatPanel",
-        "title": "Show Chat Panel"
-      },
-      {
-        "command": "mcp-ollama.showStats",
-        "title": "Show Usage Statistics"
-      },
-      {
-        "command": "mcp-ollama.logAcceptance",
-        "title": "Log Suggestion Acceptance"
-      },
-      {
-        "command": "mcp-ollama.generateFunction",
-        "title": "Generate Function"
-      },
-      {
-        "command": "mcp-ollama.generateClass",
-        "title": "Generate Class"
-      },
-      {
-        "command": "mcp-ollama.openLabs",
-        "title": "Open Copilot Labs"
-      },
-      {
-        "command": "mcp-ollama.analyzeAST",
-        "title": "Analyze Code Structure"
-      },
-      {
-        "command": "mcp-ollama.exportHistory",
-        "title": "Export Chat History"
-      },
-      {
-        "command": "mcp-ollama.importHistory",
-        "title": "Import Chat History"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "mcp-ollama.nextSuggestion",
-        "key": "alt+]",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "mcp-ollama.previousSuggestion",
-        "key": "alt+[",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "mcp-ollama.alternatives",
-        "key": "ctrl+enter",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "mcp-ollama.acceptSuggestion",
-        "key": "tab",
-        "when": "editorTextFocus && mcp-ollama.suggestionVisible"
+        "id": "smartcode-aiassist",
+        "name": "SmartCode AI Assistant",
+        "description": "AI-powered coding assistant with MCP-Ollama backend",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "fix",
+            "description": "Fix code issues"
+          },
+          {
+            "name": "explain",
+            "description": "Explain code"
+          },
+          {
+            "name": "tests",
+            "description": "Generate tests"
+          }
+        ]
       }
     ],
     "configuration": {
@@ -156,7 +47,7 @@
         },
         "mcp-ollama.host": {
           "type": "string",
-          "default": "https://localhost:11434",
+          "default": "http://10.10.110.25:11434",
           "description": "Ollama server host"
         },
         "mcp-ollama.serverUrl": {
@@ -191,64 +82,218 @@
         }
       }
     },
+    "commands": [
+      {
+        "command": "mcp-ollama.explain",
+        "title": "🔍 Explain Code",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.fix",
+        "title": "🔧 Fix Code Issues",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.tests",
+        "title": "🧪 Generate Tests",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.docs",
+        "title": "📝 Generate Documentation",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.showChatPanel",
+        "title": "💬 Open AI Chat",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.generateFunction",
+        "title": "⚡ Generate Function",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.generateClass",
+        "title": "🏗️ Generate Class",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.openLabs",
+        "title": "🧪 Open Copilot Labs",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.optimizeCode",
+        "title": "⚡ Optimize Performance",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.securityScan",
+        "title": "🔒 Security Scan",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.translateCode",
+        "title": "🔄 Translate Language",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.codeReview",
+        "title": "👀 Code Review",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.enable",
+        "title": "Enable SmartCode-AIAssist"
+      },
+      {
+        "command": "mcp-ollama.disable",
+        "title": "Disable SmartCode-AIAssist"
+      },
+      {
+        "command": "mcp-ollama.showStats",
+        "title": "Show Usage Statistics"
+      },
+      {
+        "command": "mcp-ollama.logAcceptance",
+        "title": "Log Suggestion Acceptance"
+      },
+      {
+        "command": "mcp-ollama.analyzeAST",
+        "title": "Analyze Code Structure"
+      },
+      {
+        "command": "mcp-ollama.exportHistory",
+        "title": "Export Chat History"
+      },
+      {
+        "command": "mcp-ollama.importHistory",
+        "title": "Import Chat History"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mcp-ollama.showChatPanel",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.explain",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "mcp-ollama.nextSuggestion",
+        "key": "alt+]",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.previousSuggestion",
+        "key": "alt+[",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.alternatives",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mcp-ollama.acceptSuggestion",
+        "key": "tab",
+        "when": "editorTextFocus && mcp-ollama.suggestionVisible"
+      }
+    ],
     "menus": {
       "editor/context": [
         {
           "command": "mcp-ollama.explain",
           "when": "editorHasSelection",
-          "group": "smartcode@1"
+          "group": "1_copilot@1"
         },
         {
           "command": "mcp-ollama.fix",
           "when": "editorHasSelection",
-          "group": "smartcode@2"
+          "group": "1_copilot@2"
         },
         {
           "command": "mcp-ollama.tests",
           "when": "editorHasSelection",
-          "group": "smartcode@3"
+          "group": "1_copilot@3"
         },
         {
           "command": "mcp-ollama.docs",
           "when": "editorHasSelection",
-          "group": "smartcode@4"
+          "group": "1_copilot@4"
         },
         {
-          "command": "mcp-ollama.openChat",
-          "group": "smartcode@5"
+          "command": "mcp-ollama.optimizeCode",
+          "when": "editorHasSelection",
+          "group": "1_copilot@5"
         },
         {
-          "command": "mcp-ollama.generateFunction",
-          "group": "smartcode@6"
+          "command": "mcp-ollama.securityScan",
+          "when": "editorHasSelection",
+          "group": "1_copilot@6"
         },
         {
-          "command": "mcp-ollama.generateClass",
-          "group": "smartcode@7"
+          "command": "mcp-ollama.codeReview",
+          "when": "editorHasSelection",
+          "group": "1_copilot@7"
+        },
+        {
+          "command": "mcp-ollama.translateCode",
+          "when": "editorHasSelection",
+          "group": "1_copilot@8"
+        },
+        {
+          "submenu": "smartcode.generate",
+          "group": "2_generate@1"
+        },
+        {
+          "command": "mcp-ollama.showChatPanel",
+          "group": "3_chat@1"
         },
         {
           "command": "mcp-ollama.openLabs",
-          "group": "smartcode@8"
+          "group": "3_chat@2"
+        }
+      ],
+      "smartcode.generate": [
+        {
+          "command": "mcp-ollama.generateFunction",
+          "group": "generate@1"
+        },
+        {
+          "command": "mcp-ollama.generateClass",
+          "group": "generate@2"
         }
       ]
-    }
+    },
+    "submenus": [
+      {
+        "id": "smartcode.generate",
+        "label": "🚀 Generate Code"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "npm run compile",
-    "package": "vsce package"
+    "package": "npx vsce package --out smartcode-aiassist-2.7.3.vsix",
+    "update": "npm update && npm audit fix",
+    "clean": "rm -rf out",
+    "install-local": "code --install-extension smartcode-aiassist-2.7.3.vsix --force"
   },
   "devDependencies": {
-    "@types/node": "16.x",
-    "@types/node-fetch": "^2.6.2",
+    "@types/node": "^18.x",
     "@types/vscode": "^1.103.0",
-    "typescript": "^4.9.4",
-    "vsce": "^2.15.0"
+    "@vscode/vsce": "^2.19.0",
+    "typescript": "^4.9.4"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
-    "node-fetch": "^2.6.7",
-    "axios": "^0.27.2"
-  }
+  "dependencies": {}
 }

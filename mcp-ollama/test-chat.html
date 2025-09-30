@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html><head><title>Test Chat UI</title>
+<style>
+body { font-family: Arial, sans-serif; background: #1e1e1e; color: #cccccc; padding: 20px; }
+.messages { height: 400px; overflow-y: auto; border: 1px solid #444; padding: 10px; margin-bottom: 10px; background: #252526; }
+.message { margin-bottom: 10px; padding: 8px; border-radius: 4px; }
+.message.user { background: #0e639c; margin-left: 20px; }
+.message.assistant { background: #2d2d30; margin-right: 20px; }
+.attachments { margin-bottom: 10px; }
+.file-pill { display: inline-block; background: #0e639c; color: white; padding: 4px 8px; margin: 2px; border-radius: 12px; font-size: 12px; }
+.file-pill .remove { margin-left: 6px; cursor: pointer; font-weight: bold; }
+.input-wrapper { display: flex; gap: 8px; }
+.attach-button { padding: 8px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; font-size: 16px; }
+.input-box { flex: 1; padding: 8px; background: #3c3c3c; border: 1px solid #444; color: white; }
+.send-button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; }
+.send-button:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+<h2>MCP-Ollama Chat Test</h2>
+<div class="messages" id="messages">
+<div class="message assistant">Hello! I'm your AI coding assistant. How can I help you today?</div>
+</div>
+<div class="attachments" id="attachments"></div>
+<div class="input-wrapper">
+<button class="attach-button" id="attachButton" onclick="attachFiles()" title="Attach files">📎</button>
+<input class="input-box" id="messageInput" placeholder="Ask me anything..." />
+<button class="send-button" id="sendButton" onclick="sendMessage()" disabled>Send</button>
+</div>
+<script>
+let attachedFiles = [];
+
+function attachFiles() {
+    alert('File attachment clicked! This would open file picker in VS Code.');
+}
+
+function removeFile(index) {
+    attachedFiles.splice(index, 1);
+    updateAttachments();
+}
+
+function updateAttachments() {
+    const container = document.getElementById('attachments');
+    container.innerHTML = '';
+    attachedFiles.forEach((file, index) => {
+        const pill = document.createElement('div');
+        pill.className = 'file-pill';
+        pill.innerHTML = '📄 ' + file.name + ' (' + file.size + 'KB) <span class="remove" onclick="removeFile(' + index + ')">&times;</span>';
+        container.appendChild(pill);
+    });
+}
+
+function sendMessage() {
+    const input = document.getElementById('messageInput');
+    const message = input.value.trim();
+    if (!message) return;
+    addMessage('user', message);
+    input.value = '';
+    updateSendButton();
+    
+    // Simulate response
+    setTimeout(() => {
+        addMessage('assistant', 'This is a test response. The file attachment button should be visible.');
+    }, 1000);
+}
+
+function addMessage(sender, text) {
+    const messages = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'message ' + sender;
+    div.textContent = text;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function updateSendButton() {
+    const input = document.getElementById('messageInput');
+    const button = document.getElementById('sendButton');
+    button.disabled = !input.value.trim();
+}
+
+document.getElementById('messageInput').addEventListener('input', updateSendButton);
+document.getElementById('messageInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); sendMessage(); }
+});
+
+// Test file attachment
+attachedFiles = [{name: 'test.js', size: 2}];
+updateAttachments();
+</script>
+</body></html>

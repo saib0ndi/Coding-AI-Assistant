@@ -21,8 +21,10 @@ export class HTTPServer {
         if (this.useHttps) {
             const httpsOptions = this.getHttpsOptions();
             this.server = https.createServer(httpsOptions, this.handleRequest.bind(this));
+            this.server.timeout = 120000; // 2 minutes for AI responses
         } else {
             this.server = http.createServer(this.handleRequest.bind(this));
+        this.server.timeout = 120000; // 2 minutes for AI responses
         }
     }
 
@@ -74,7 +76,20 @@ export class HTTPServer {
             return;
         }
 
-        const toolName = url.pathname.split('/tools/')[1];
+        const pathParts = url.pathname.split('/tools/');
+        if (pathParts.length !== 2) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid tool path' }));
+            return;
+        }
+
+        const toolName = this.sanitizeToolName(pathParts[1]);
+        if (!toolName) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid tool name' }));
+            return;
+        }
+
         const body = await this.readRequestBody(req);
         
         try {
@@ -96,7 +111,20 @@ export class HTTPServer {
             return;
         }
 
-        const streamType = url.pathname.split('/stream/')[1];
+        const pathParts = url.pathname.split('/stream/');
+        if (pathParts.length !== 2) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid stream path' }));
+            return;
+        }
+
+        const streamType = this.sanitizeStreamType(pathParts[1]);
+        if (!streamType) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid stream type' }));
+            return;
+        }
+
         const body = await this.readRequestBody(req);
         
         try {
@@ -202,6 +230,42 @@ export class HTTPServer {
             }
         }
         throw new Error('Certificate file not found in any of the specified paths');
+    }
+
+    private sanitizeToolName(toolName: string): string | null {
+        if (!toolName || typeof toolName !== 'string') {
+            return null;
+        }
+        
+        // Only allow alphanumeric characters, underscores, and hyphens
+        const sanitized = toolName.replace(/[^a-zA-Z0-9_-]/g, '');
+        
+        // Validate against known tool names
+        const validTools = [
+            'code_completion', 'code_generation', 'code_explanation', 'auto_error_fix',
+            'diagnose_code', 'quick_fix', 'batch_error_fix', 'error_pattern_analysis',
+            'validate_fix', 'code_analysis', 'context_analysis', 'refactoring_suggestions',
+            'chat_assistant', 'explain_code', 'refactor_code', 'generate_tests',
+            'generate_docs', 'security_scan', 'optimize_performance', 'translate_code',
+            'suggest_imports', 'code_review', 'inline_suggestion', 'multi_file_suggestion',
+            'slash_command', 'lsp_integration', 'suggestion_filter', 'multi_model',
+            'keyboard_shortcut', 'telemetry', 'enterprise_tools', 'copilot_labs',
+            'streaming_suggestion', 'context_window', 'ghost_text', 'persistent_cache',
+            'workspace_analysis'
+        ];
+        
+        return validTools.includes(sanitized) ? sanitized : null;
+    }
+
+    private sanitizeStreamType(streamType: string): string | null {
+        if (!streamType || typeof streamType !== 'string') {
+            return null;
+        }
+        
+        const sanitized = streamType.replace(/[^a-zA-Z0-9_-]/g, '');
+        const validTypes = ['completion', 'chat'];
+        
+        return validTypes.includes(sanitized) ? sanitized : null;
     }
 
     async start(): Promise<void> {

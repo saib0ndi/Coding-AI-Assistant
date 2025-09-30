@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import fetch from 'node-fetch';
 import * as https from 'https';
+import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,23 +32,23 @@ export class MCPClient {
             const parsed = new URL(url);
             // Only allow http/https protocols
             if (!['http:', 'https:'].includes(parsed.protocol)) {
-                return 'https://localhost:3077';
+                return 'http://localhost:3077';
             }
-            // Only allow localhost or specific safe hosts
-            if (!['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)) {
-                return 'https://localhost:3077';
+            // Allow localhost and specific safe hosts
+            const allowedHosts = ['localhost', '127.0.0.1', '::1', '10.10.110.25'];
+            if (!allowedHosts.includes(parsed.hostname)) {
+                return 'http://localhost:3077';
             }
             return url;
         } catch {
-            return 'https://localhost:3077';
+            return 'http://localhost:3077';
         }
     }
 
     async connect(): Promise<void> {
         try {
-            const agent = this.createHttpsAgent();
-            const response = await fetch(`${this.baseUrl}/health`, { agent });
-            if (response.ok) {
+            const response = await this.makeRequest('GET', '/health');
+            if (response.statusCode === 200) {
                 this.connected = true;
                 console.log('Connected to MCP-Ollama server');
             } else {
@@ -64,6 +64,49 @@ export class MCPClient {
 
     async disconnect(): Promise<void> {
         this.connected = false;
+    }
+
+    private async makeRequest(method: string, path: string, body?: string): Promise<{statusCode: number, statusMessage: string, body: string}> {
+        return new Promise((resolve, reject) => {
+            const url = new URL(this.baseUrl + path);
+            const isHttps = url.protocol === 'https:';
+            const client = isHttps ? https : http;
+            
+            const options = {
+                hostname: url.hostname,
+                port: url.port || (isHttps ? 443 : 80),
+                path: url.pathname + url.search,
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(body && { 'Content-Length': Buffer.byteLength(body) })
+                },
+                ...(isHttps && { agent: this.createHttpsAgent() })
+            };
+
+            const req = client.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    resolve({
+                        statusCode: res.statusCode || 0,
+                        statusMessage: res.statusMessage || '',
+                        body: data
+                    });
+                });
+            });
+
+            req.on('error', reject);
+            req.setTimeout(60000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+
+            if (body) {
+                req.write(body);
+            }
+            req.end();
+        });
     }
 
     private createHttpsAgent(): https.Agent | undefined {
@@ -103,19 +146,13 @@ export class MCPClient {
         }
 
         try {
-            const agent = this.createHttpsAgent();
-            const response = await fetch(`${this.baseUrl}/tools/${name}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(args),
-                agent
-            });
+            const response = await this.makeRequest('POST', `/tools/${name}`, JSON.stringify(args));
             
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            if (response.statusCode !== 200) {
+                throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
             }
             
-            return await response.json();
+            return JSON.parse(response.body);
         } catch (error) {
             const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
             console.error(`Error calling tool ${name}: ${sanitizedError}`);
@@ -181,6 +218,17 @@ export class MCPClient {
         }
     }
 
+    async explainCodeWithModel(code: string, language: string, model: string): Promise<string> {
+        try {
+            const result = await this.callTool('explain_code', { code, language, detail: 'detailed', model });
+            return result.explanation || 'No explanation available';
+        } catch (error) {
+            const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+            console.error(`Error explaining code: ${sanitizedError}`);
+            return 'Error explaining code';
+        }
+    }
+
     async fixCode(code: string, language: string): Promise<string | null> {
         try {
             const result = await this.callTool('refactor_code', { code, language, focus: 'all' });
@@ -225,6 +273,17 @@ export class MCPClient {
         }
     }
 
+    async handleSlashCommandWithModel(command: string, code: string, language: string, model: string): Promise<string> {
+        try {
+            const result = await this.callTool('slash_command', { command, code, language, model });
+            return result.result || 'No result';
+        } catch (error) {
+            const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+            console.error(`Error handling slash command: ${sanitizedError}`);
+            return 'Error executing command';
+        }
+    }
+
     async recordTelemetry(event: string, suggestionId: string, context: any): Promise<void> {
         try {
             // Sanitize context to prevent data leaks
@@ -248,5 +307,45 @@ export class MCPClient {
             }
         }
         return sanitized;
+    }
+    
+    async makeOllamaRequest(path: string): Promise<{statusCode: number, statusMessage: string, body: string}> {
+        return new Promise((resolve, reject) => {
+            const config = vscode.workspace.getConfiguration('mcp-ollama');
+            const ollamaHost = config.get<string>('host') || 'http://10.10.110.25:11434';
+            const url = new URL(ollamaHost + path);
+            const isHttps = url.protocol === 'https:';
+            const client = isHttps ? https : http;
+            
+            const options = {
+                hostname: url.hostname,
+                port: url.port || (isHttps ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            };
+
+            const req = client.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    resolve({
+                        statusCode: res.statusCode || 0,
+                        statusMessage: res.statusMessage || '',
+                        body: data
+                    });
+                });
+            });
+
+            req.on('error', reject);
+            req.setTimeout(5000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+
+            req.end();
+        });
     }
 }

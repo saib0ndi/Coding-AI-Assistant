@@ -80,10 +80,11 @@ export class InlineSuggestionProvider implements vscode.InlineCompletionItemProv
             return items;
 
         } catch (error) {
-            console.error('Error getting inline suggestions:', error);
+            const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, ' ') : 'Unknown error';
+            console.error('Error getting inline suggestions:', sanitizedError);
             // Fallback to smart suggestions
             const fallbackSuggestions = this.generateSmartSuggestions(textBeforeCursor, document.languageId, contextCode);
-            console.log('SmartCode-AIAssist: Generated fallback suggestions:', fallbackSuggestions);
+            console.log('SmartCode-AIAssist: Generated fallback suggestions:', fallbackSuggestions.length);
             const items = fallbackSuggestions.map(suggestion => 
                 new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))
             );
@@ -155,9 +156,13 @@ export class InlineSuggestionProvider implements vscode.InlineCompletionItemProv
             // Record telemetry (sanitized)
             const sanitizedContext = {
                 language: editor.document.languageId.replace(/[^a-zA-Z0-9]/g, ''),
-                suggestionLength: Math.min(suggestion.insertText.toString().length, 1000)
+                suggestionLength: Math.min(suggestion.insertText.toString().length, 100)
             };
-            this.mcpClient.recordTelemetry('accept', this.generateSuggestionId(), sanitizedContext);
+            try {
+                this.mcpClient.recordTelemetry('accept', this.generateSuggestionId(), sanitizedContext);
+            } catch (telemetryError) {
+                // Silently ignore telemetry errors
+            }
 
             this.clearSuggestions();
         }

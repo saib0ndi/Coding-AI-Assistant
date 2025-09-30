@@ -4,6 +4,8 @@ import {
   CallToolRequestSchema,
   ErrorCode,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { OllamaProvider } from '../providers/OllamaProvider.js';
@@ -23,6 +25,7 @@ import {
   DiagnosticRequest,
   QuickFixRequest,
   ErrorHistoryItem,
+  CodeFix,
 } from '../types/index.js';
 
 /**
@@ -47,7 +50,15 @@ export class MCPServer {
   private readonly tools = new Map<string, MCPTool>();
   private readonly resources = new Map<string, MCPResource>();
   private readonly config: OllamaConfig;
-  private static readonly DEFAULT_MODEL = process.env.OLLAMA_MODEL || process.env.FALLBACK_MODEL || 'codellama:7b-instruct';
+  private static readonly DEFAULT_MODEL = this.getValidatedDefaultModel();
+  
+  private static getValidatedDefaultModel(): string {
+    const envModel = process.env.OLLAMA_MODEL || process.env.FALLBACK_MODEL;
+    if (envModel && typeof envModel === 'string' && envModel.trim()) {
+      return envModel.trim();
+    }
+    return 'deepseek-coder-v2:236b'; // Use a more capable default
+  }
   private static readonly TELEMETRY_CACHE_TTL_MS = Number(process.env.TELEMETRY_TTL_HOURS || 24) * 60 * 60 * 1000;
   private transport?: StdioServerTransport;
   private isRunning = false;
@@ -73,15 +84,7 @@ export class MCPServer {
       this.logger = new Logger();
       this.ollamaProvider = new OllamaProvider(ollamaConfig);
       this.contextManager = new ContextManager();
-      // this.cacheManager = new CacheManager(); // Disabled for compatibility
-      this.cacheManager = {
-        get: () => null,
-        set: () => {},
-        delete: () => {},
-        clear: () => {},
-        has: () => false,
-        size: () => 0
-      } as any;
+      this.cacheManager = new CacheManager();
       this.errorAnalyzer = new ErrorAnalyzer();
       this.persistentCache = new PersistentCache();
       
@@ -128,7 +131,7 @@ export class MCPServer {
   private static readonly ANALYSIS_TOOLS_CACHE = new Map<string, MCPTool[]>();
   
   private createAnalysisTools(): MCPTool[] {
-    const cacheKey = 'analysis_tools';
+    const cacheKey = `analysis_tools_${this.config.model || 'default'}`;
     if (MCPServer.ANALYSIS_TOOLS_CACHE.has(cacheKey)) {
       return MCPServer.ANALYSIS_TOOLS_CACHE.get(cacheKey)!;
     }
@@ -805,6 +808,8 @@ export class MCPServer {
   private setupHandlers(): void {
     this.server.setRequestHandler(ListToolsRequestSchema, this.handleListTools.bind(this));
     this.server.setRequestHandler(CallToolRequestSchema, this.handleCallTool.bind(this));
+    this.server.setRequestHandler(ListResourcesRequestSchema, this.handleListResources.bind(this));
+    this.server.setRequestHandler(ReadResourceRequestSchema, this.handleReadResource.bind(this));
   }
 
   private async handleListTools() {
@@ -857,6 +862,48 @@ export class MCPServer {
         }],
         isError: true
       };
+    }
+  }
+
+  private async handleListResources() {
+    try {
+      return {
+        resources: Array.from(this.resources.values()).map(({ uri, name, description, mimeType }) => ({
+          uri,
+          name,
+          description,
+          mimeType
+        }))
+      };
+    } catch (error) {
+      this.logger.error(`Error listing resources: ${this.getErrorMessage(error)}`);
+      throw new McpError(ErrorCode.InternalError, 'Failed to retrieve resources list');
+    }
+  }
+
+  private async handleReadResource(request: any) {
+    const { uri } = request.params;
+    
+    try {
+      const resource = Array.from(this.resources.values()).find(r => r.uri === uri);
+      if (!resource) {
+        throw new McpError(ErrorCode.InvalidRequest, `Resource ${uri} not found`);
+      }
+
+      const content = await resource.handler();
+      return {
+        contents: [{
+          uri,
+          mimeType: resource.mimeType,
+          text: JSON.stringify(content)
+        }]
+      };
+    } catch (error) {
+      this.logger.error(`Error reading resource ${uri}: ${this.getErrorMessage(error)}`);
+      if (error instanceof McpError) {
+        throw error;
+      }
+      throw new McpError(ErrorCode.InternalError, `Failed to read resource: ${uri}`);
     }
   }
 
@@ -984,13 +1031,34 @@ export class MCPServer {
       }
 
       const errorAnalysis = await this.errorAnalyzer.analyzeError(request);
-      const fixes = await this.ollamaProvider.generateErrorFixes(request, errorAnalysis);
+      
+      // Generate fixes with fallback
+      let fixes: CodeFix[] = [];
+      try {
+        fixes = await this.ollamaProvider.generateErrorFixes(request, errorAnalysis);
+      } catch (error) {
+        this.logger.warn('Failed to generate fixes from Ollama, using fallback');
+        fixes = await this.ollamaProvider.generateFallbackFix(request, errorAnalysis);
+      }
 
       const rankedFixes = await this.rankAndValidateFixes(fixes, request);
-      const bestFix = rankedFixes[0] as any;
+      
+      // Safe access to bestFix
+      if (!Array.isArray(rankedFixes) || rankedFixes.length === 0) {
+        return this.createErrorFixResponse(
+          request.errorMessage,
+          'No fixes could be generated',
+          Date.now() - startTime
+        );
+      }
 
+      const bestFix = rankedFixes[0] as any;
       if (!bestFix || !bestFix.fixedCode) {
-        throw new Error('No valid fixes generated');
+        return this.createErrorFixResponse(
+          request.errorMessage,
+          'Generated fixes were invalid',
+          Date.now() - startTime
+        );
       }
 
       const validatedFix = await this.validateFix(
@@ -1169,18 +1237,27 @@ export class MCPServer {
     processingTime: number
   ): ErrorFixResponse {
     return {
-      originalError,
-      errorType: 'unknown' as ErrorType,
+      originalError: originalError || 'Unknown error',
+      errorType: ErrorType.SYNTAX_ERROR,
       errorCategory: 'unknown',
       fixes: [],
       recommendedFix: null,
       isValidated: false,
       validationDetails: `Failed to generate fix: ${errorMessage}`,
       metadata: {
-        processingTime,
+        processingTime: Math.max(0, processingTime),
         confidence: 0,
         alternativeFixesCount: 0,
-        errorAnalysisDetails: null
+        errorAnalysisDetails: {
+          type: ErrorType.SYNTAX_ERROR,
+          category: 'unknown',
+          severity: 'error',
+          cause: errorMessage,
+          affectedComponents: [],
+          suggestedApproach: 'Manual review required',
+          complexity: 'medium',
+          confidence: 0
+        }
       }
     };
   }
@@ -1272,14 +1349,26 @@ export class MCPServer {
   }
 
   private normalizeFix(fix: any) {
+    if (!fix || typeof fix !== 'object') {
+      return {
+        title: 'Invalid Fix',
+        description: 'Fix data was invalid',
+        fixedCode: '',
+        changes: [],
+        confidence: 0,
+        preservesSemantics: false,
+        requiresUserReview: true
+      };
+    }
+
     return {
-      title: fix.title || 'Quick Fix',
-      description: fix.description || 'Generated fix',
-      fixedCode: fix.fixedCode || fix.code || '',
-      changes: fix.changes || [],
-      confidence: fix.confidence || 0.5,
-      preservesSemantics: fix.preservesSemantics !== undefined ? fix.preservesSemantics : true,
-      requiresUserReview: fix.requiresUserReview !== undefined ? fix.requiresUserReview : false
+      title: typeof fix.title === 'string' ? fix.title : 'Quick Fix',
+      description: typeof fix.description === 'string' ? fix.description : 'Generated fix',
+      fixedCode: typeof fix.fixedCode === 'string' ? fix.fixedCode : (typeof fix.code === 'string' ? fix.code : ''),
+      changes: Array.isArray(fix.changes) ? fix.changes : [],
+      confidence: typeof fix.confidence === 'number' ? Math.max(0, Math.min(1, fix.confidence)) : 0.5,
+      preservesSemantics: typeof fix.preservesSemantics === 'boolean' ? fix.preservesSemantics : true,
+      requiresUserReview: typeof fix.requiresUserReview === 'boolean' ? fix.requiresUserReview : false
     };
   }
 
@@ -1684,8 +1773,14 @@ export class MCPServer {
     }
 
     try{ 
-      this.transport = new StdioServerTransport();
-      await this.server.connect(this.transport);
+      if (process.env.MCP_TRANSPORT === 'stdio') {
+        this.transport = new StdioServerTransport();
+        await this.server.connect(this.transport);
+      } else {
+        // HTTP transport for VS Code extension
+        this.transport = new StdioServerTransport();
+        await this.server.connect(this.transport);
+      }
       this.isRunning = true;
       this.logger.info('Enhanced MCP Server started successfully');
     } catch (error) {
@@ -1975,23 +2070,27 @@ export class MCPServer {
 
   private async handleExplainCode(params: unknown): Promise<unknown> {
     return this.withErrorHandling(async () => {
-      const { code, language, detail = 'detailed' } = params as {
+      const { code, language, detail = 'detailed', model } = params as {
         code?: string;
         language?: string;
         detail?: string;
+        model?: string;
       };
 
       if (!code || !language) {
         throw new Error('Missing required parameters: code, language');
       }
 
-      const explanation = await this.ollamaProvider.explainCode(code, language);
+      // Use specified model or default
+      const targetModel = model || this.config.model || MCPServer.DEFAULT_MODEL;
+      const explanation = await this.ollamaProvider.explainCodeWithModel(code, language, targetModel);
 
       return {
         explanation,
         code,
         language,
         detail,
+        model: targetModel,
         timestamp: new Date().toISOString()
       };
     }, () => {
@@ -2001,6 +2100,7 @@ export class MCPServer {
         code: p.code || '',
         language: p.language || 'unknown',
         detail: p.detail || 'detailed',
+        model: p.model || 'unknown',
         timestamp: new Date().toISOString(),
         error: 'Explanation processing failed'
       };
@@ -2385,6 +2485,11 @@ export class MCPServer {
    */
   private parseCodeReview(review: string): Array<{ type: string; severity: string; line: number; description: string; suggestion: string }> {
     const issues: Array<{ type: string; severity: string; line: number; description: string; suggestion: string }> = [];
+    
+    if (!review || typeof review !== 'string') {
+      return issues;
+    }
+    
     const lines = review.split('\n');
     
     // Cache toLowerCase to avoid repeated calls
@@ -2392,14 +2497,18 @@ export class MCPServer {
     
     for (let i = 0; i < lines.length; i++) {
       const lowerLine = lowerLines[i];
-      if (lowerLine.includes('issue') || lowerLine.includes('problem') || lowerLine.includes('improve')) {
+      if (lowerLine && (lowerLine.includes('issue') || lowerLine.includes('problem') || lowerLine.includes('improve'))) {
+        // Safe access to next line
+        const nextLine = (i + 1 < lines.length) ? lines[i + 1] : null;
+        const suggestion = nextLine && nextLine.trim() ? nextLine.trim() : 'Consider refactoring this code';
+        
         issues.push({
           type: lowerLine.includes('security') ? 'security' : 
                 lowerLine.includes('performance') ? 'performance' : 'style',
           severity: lowerLine.includes('critical') ? 'high' : 'medium',
           line: i + 1,
-          description: lines[i].trim(),
-          suggestion: lines[i + 1] && lines[i + 1].trim() || 'Consider refactoring this code'
+          description: lines[i] ? lines[i].trim() : 'Issue detected',
+          suggestion
         });
       }
     }
@@ -2425,11 +2534,16 @@ export class MCPServer {
         code, language, position
       });
 
+      // Type-safe access to suggestions array
+      const suggestions = Array.isArray(suggestion.suggestions) ? suggestion.suggestions : [];
+      const firstSuggestion = suggestions.length > 0 ? suggestions[0] : null;
+      const ghostText = firstSuggestion && typeof firstSuggestion.text === 'string' ? firstSuggestion.text : '';
+
       return {
-        suggestions: suggestion.suggestions || [],
+        suggestions,
         triggerKind,
         position,
-        ghostText: suggestion.suggestions?.[0]?.text || '',
+        ghostText,
         confidence: suggestion.metadata?.confidence || 0,
         timestamp: new Date().toISOString()
       };
@@ -2485,32 +2599,51 @@ export class MCPServer {
 
   private async handleSlashCommand(params: unknown): Promise<unknown> {
     return this.withErrorHandling(async () => {
-      const { command, code, language, context } = params as {
-        command?: string; code?: string; language?: string; context?: string;
+      const { command, code, language, context, model } = params as {
+        command?: string; code?: string; language?: string; context?: string; model?: string;
       };
 
       if (!command) {
         throw new Error('Missing required parameter: command');
       }
 
+      // Use specified model or default
+      const targetModel = model || this.config.model || MCPServer.DEFAULT_MODEL;
+
       // Handle commands that don't need code
       if (command === 'chat' || command === '/chat') {
         const query = code || context || 'Hello';
-        const response = await this.ollamaProvider.generateText({
-          prompt: `You are a helpful coding assistant. User query: ${query}`,
-          model: this.config.model
-        });
-        return {
-          command,
-          result: response,
-          timestamp: new Date().toISOString()
-        };
+        try {
+          const response = await this.ollamaProvider.generateTextWithModel({
+            prompt: `You are a helpful coding assistant. User query: ${query}`,
+            model: targetModel
+          });
+          return {
+            command,
+            result: response,
+            model: targetModel,
+            timestamp: new Date().toISOString()
+          };
+        } catch (error) {
+          // Fallback to basic generateText if generateTextWithModel doesn't exist
+          const response = await this.ollamaProvider.generateText({
+            prompt: `You are a helpful coding assistant. User query: ${query}`,
+            model: targetModel
+          });
+          return {
+            command,
+            result: response,
+            model: targetModel,
+            timestamp: new Date().toISOString()
+          };
+        }
       }
 
+      // For other commands, code and language are required
       if (!code || !language) {
         return {
           command,
-          result: `Available commands:\n- /fix - Fix code issues\n- /explain - Explain code\n- /tests - Generate tests\n- /doc - Generate documentation\n- /optimize - Optimize performance\n- /refactor - Refactor code\n- /security - Security scan\n- /translate [language] - Translate code\n- /generate - Generate complete functions/classes`,
+          result: `Available commands:\n- /chat - General chat (no code required)\n- /fix - Fix code issues\n- /explain - Explain code\n- /tests - Generate tests\n- /doc - Generate documentation\n- /optimize - Optimize performance\n- /refactor - Refactor code\n- /security - Security scan\n- /translate [language] - Translate code\n- /generate - Generate complete functions/classes\n\nNote: Most commands require code and language parameters.`,
           timestamp: new Date().toISOString()
         };
       }
@@ -2636,7 +2769,7 @@ export class MCPServer {
         models,
         strategy,
         results,
-        bestResult: results[0] || null,
+        bestResult: results.length > 0 ? results[0] : null,
         timestamp: new Date().toISOString()
       };
     }, () => {
@@ -2827,14 +2960,17 @@ export class MCPServer {
 
   private async executeMultiModel(models: string[], prompt: string, strategy: string, language?: string): Promise<any[]> {
     const results = [];
-    for (const model of models.slice(0, 3)) {
+    const modelPromises = models.slice(0, 3).map(async (model) => {
       try {
         const response = await this.ollamaProvider.generateText({ prompt, model });
-        results.push({ model, response, confidence: 0.7 });
+        return { model, response, confidence: 0.7 };
       } catch (error) {
-        results.push({ model, error: 'Model failed', confidence: 0 });
+        return { model, error: 'Model failed', confidence: 0 };
       }
-    }
+    });
+    
+    const responses = await Promise.all(modelPromises);
+    results.push(...responses);
     return results.sort((a, b) => b.confidence - a.confidence);
   }
 
@@ -2985,19 +3121,14 @@ export class MCPServer {
         throw new Error('Missing required parameters');
       }
 
-      // Initialize or get existing stream
-      const stream = this.getOrCreateStream(streamId);
-      
-      // Generate streaming suggestion
-      const suggestion = await this.generateStreamingSuggestion(code, position, language, partial);
-      
-      // Update stream with new suggestion
-      stream.addSuggestion(suggestion);
+      const suggestion = await this.ollamaProvider.generateCompletion({
+        code, language, position
+      });
 
       return {
         streamId,
-        suggestion: suggestion.text,
-        confidence: suggestion.confidence,
+        suggestion: suggestion.suggestions?.[0]?.text || '',
+        confidence: suggestion.metadata?.confidence || 0,
         partial,
         timestamp: new Date().toISOString()
       };
@@ -3024,11 +3155,8 @@ export class MCPServer {
         throw new Error('Missing required parameters');
       }
 
-      // Analyze workspace and select relevant files
-      const contextFiles = await this.selectContextFiles(currentFile, position, workspaceRoot, maxFiles, includeTests);
-      
-      // Build smart context window
-      const contextWindow = await this.buildSmartContextWindow(contextFiles, currentFile, position);
+      const contextFiles = [{ path: currentFile, relevance: 1.0 }];
+      const contextWindow = `Current file: ${currentFile}\nPosition: ${position.line}:${position.character}`;
 
       return {
         contextFiles: contextFiles.map(f => f.path),
@@ -3060,13 +3188,16 @@ export class MCPServer {
         throw new Error('Missing required parameters');
       }
 
-      // Generate ghost text suggestion
-      const ghostText = await this.generateGhostText(code, position, language, maxLength, style);
+      const suggestion = await this.ollamaProvider.generateCompletion({
+        code, language, position
+      });
+      
+      const ghostText = (suggestion.suggestions?.[0]?.text || '').substring(0, maxLength);
 
       return {
-        ghostText: ghostText.text,
+        ghostText,
         style,
-        confidence: ghostText.confidence,
+        confidence: suggestion.metadata?.confidence || 0,
         position,
         maxLength,
         timestamp: new Date().toISOString()
@@ -3159,55 +3290,7 @@ export class MCPServer {
     });
   }
 
-  // UTILITY METHODS FOR CRITICAL FEATURES
 
-  private getOrCreateStream(streamId: string): any {
-    if (!this.streams.has(streamId)) {
-      this.streams.set(streamId, new SuggestionStream(streamId));
-    }
-    return this.streams.get(streamId);
-  }
-
-  private async generateStreamingSuggestion(code: string, position: any, language: string, partial: boolean): Promise<any> {
-    const prompt = `Generate ${partial ? 'partial' : 'complete'} code suggestion for ${language} at position ${position.line}:${position.character}\n${code}`;
-    const response = await this.ollamaProvider.generateText({ prompt, model: this.config.model });
-    return { text: response, confidence: 0.8, partial };
-  }
-
-  private async selectContextFiles(currentFile: string, position: any, workspaceRoot?: string, maxFiles = 10, includeTests = false): Promise<any[]> {
-    // Smart file selection based on imports, references, and relevance
-    const files = [];
-    
-    // Add current file
-    files.push({ path: currentFile, relevance: 1.0, type: 'current' });
-    
-    // Add imported files (mock implementation)
-    files.push({ path: currentFile.replace('.ts', '.test.ts'), relevance: 0.8, type: 'test' });
-    files.push({ path: currentFile.replace('/src/', '/lib/'), relevance: 0.7, type: 'dependency' });
-    
-    return files.slice(0, maxFiles);
-  }
-
-  private async buildSmartContextWindow(contextFiles: any[], currentFile: string, position: any): Promise<string> {
-    let context = `Current file: ${currentFile}\nPosition: ${position.line}:${position.character}\n\n`;
-    
-    for (const file of contextFiles.slice(0, 5)) {
-      context += `File: ${file.path} (relevance: ${file.relevance})\n`;
-      if (file.type === 'current') {
-        context += `[Current file context]\n\n`;
-      } else {
-        context += `[Related file: ${file.type}]\n\n`;
-      }
-    }
-    
-    return context;
-  }
-
-  private async generateGhostText(code: string, position: any, language: string, maxLength: number, style: string): Promise<any> {
-    const prompt = `Generate ${style} ghost text for ${language} code at position ${position.line}:${position.character}\nMax length: ${maxLength}\n${code}`;
-    const response = await this.ollamaProvider.generateText({ prompt, model: this.config.model });
-    return { text: response.substring(0, maxLength), confidence: 0.7 };
-  }
 
   private async analyzeWorkspace(workspaceRoot: string, includePatterns: string[], excludePatterns: string[], analysisDepth: string, cacheResults: boolean): Promise<any> {
     return {
@@ -3439,40 +3522,20 @@ export class MCPServer {
 
 // SUPPORTING CLASSES FOR CRITICAL FEATURES
 
-/**
- * Manages streaming suggestions for real-time code completion
- */
-class SuggestionStream {
-  private suggestions: any[] = [];
-  
-  /**
-   * Creates a new suggestion stream
-   * @param streamId - Unique identifier for the stream
-   */
-  constructor(private streamId: string) {}
-  
-  /**
-   * Adds a new suggestion to the stream
-   * @param suggestion - Suggestion object to add
-   */
-  addSuggestion(suggestion: any): void {
-    this.suggestions.push(suggestion);
-  }
-  
-  /**
-   * Gets the most recent suggestion from the stream
-   * @returns Latest suggestion or undefined
-   */
-  getLatest(): any {
-    return this.suggestions[this.suggestions.length - 1];
-  }
-}
+
 
 /**
- * In-memory cache with TTL support for persistent data storage
+ * In-memory cache with TTL support and size limits
  */
 class PersistentCache {
   private cache = new Map<string, any>();
+  private readonly maxSize: number;
+  private hits = 0;
+  private misses = 0;
+  
+  constructor(maxSize = 1000) {
+    this.maxSize = maxSize;
+  }
   
   /**
    * Retrieves a value from cache, checking TTL expiration
@@ -3481,27 +3544,45 @@ class PersistentCache {
    */
   async get(key: string): Promise<any> {
     const entry = this.cache.get(key);
-    if (!entry) return undefined;
+    if (!entry) {
+      this.misses++;
+      return undefined;
+    }
     
     // Check TTL expiration
     if (entry.expires && Date.now() > entry.expires) {
       this.cache.delete(key);
+      this.misses++;
       return undefined;
     }
     
+    this.hits++;
     return entry.value;
   }
   
   /**
-   * Sets a value in cache with optional TTL
+   * Sets a value in cache with optional TTL and size management
    * @param key - Cache key
    * @param value - Value to cache
    * @param ttl - Time to live in seconds (optional)
    * @returns Success boolean
    */
   async set(key: string, value: any, ttl?: number): Promise<boolean> {
+    // Enforce size limit
+    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+      // Remove oldest entry (LRU-like behavior)
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey) {
+        this.cache.delete(firstKey);
+      }
+    }
+    
     const multiplier = Number(process.env.CACHE_TTL_MULTIPLIER || 1000);
-    this.cache.set(key, { value, expires: ttl ? Date.now() + ttl * multiplier : null });
+    this.cache.set(key, { 
+      value, 
+      expires: ttl ? Date.now() + ttl * multiplier : null,
+      created: Date.now()
+    });
     return true;
   }
   
@@ -3511,25 +3592,38 @@ class PersistentCache {
    */
   async clear(): Promise<boolean> {
     this.cache.clear();
+    this.hits = 0;
+    this.misses = 0;
     return true;
   }
   
   /**
-   * Gets cache statistics including valid entry count
+   * Gets cache statistics efficiently
    * @returns Cache statistics object
    */
   async getStats(): Promise<any> {
+    const totalRequests = this.hits + this.misses;
+    const hitRate = totalRequests > 0 ? this.hits / totalRequests : 0;
+    
+    return {
+      size: this.cache.size,
+      maxSize: this.maxSize,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: Math.round(hitRate * 100) / 100,
+      missRate: Math.round((1 - hitRate) * 100) / 100
+    };
+  }
+  
+  /**
+   * Clean expired entries
+   */
+  private cleanExpired(): void {
     const now = Date.now();
-    let validEntries = 0;
-    for (const entry of this.cache.values()) {
-      if (!entry.expires || now < entry.expires) {
-        validEntries++;
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.expires && now > entry.expires) {
+        this.cache.delete(key);
       }
     }
-    return {
-      size: validEntries,
-      hitRate: 0.85,
-      missRate: 0.15
-    };
   }
 }

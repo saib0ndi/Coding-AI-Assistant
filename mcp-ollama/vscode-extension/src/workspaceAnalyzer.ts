@@ -35,20 +35,24 @@ export class WorkspaceAnalyzer {
     }
 
     async analyzeWorkspace(): Promise<any> {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            return { error: 'No workspace folder found' };
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                return { error: 'No workspace folder found' };
+            }
+
+            const analysis = {
+                folders: workspaceFolders.map(f => f.uri.fsPath),
+                files: await this.getWorkspaceFiles(),
+                languages: await this.getLanguageStats(),
+                dependencies: await this.analyzeDependencies(),
+                structure: await this.analyzeProjectStructure()
+            };
+
+            return analysis;
+        } catch (error) {
+            return { error: `Workspace analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
         }
-
-        const analysis = {
-            folders: workspaceFolders.map(f => f.uri.fsPath),
-            files: await this.getWorkspaceFiles(),
-            languages: await this.getLanguageStats(),
-            dependencies: await this.analyzeDependencies(),
-            structure: await this.analyzeProjectStructure()
-        };
-
-        return analysis;
     }
 
     async analyzeFile(filePath: string): Promise<any> {
@@ -182,30 +186,35 @@ export class WorkspaceAnalyzer {
 
     private extractFunctions(content: string, language: string): string[] {
         const functions: string[] = [];
-        const lines = content.split('\n');
+        
+        // Sanitize input to prevent code injection
+        const sanitizedContent = content.replace(/[\r\n\t]/g, ' ').substring(0, 10000);
+        const sanitizedLanguage = language.replace(/[^a-zA-Z]/g, '');
 
         const patterns: Record<string, RegExp> = {
-            javascript: /function\s+(\w+)|(\w+)\s*=\s*function|(\w+)\s*=>\s*{|class\s+(\w+)/g,
-            typescript: /function\s+(\w+)|(\w+)\s*=\s*function|(\w+)\s*=>\s*{|class\s+(\w+)/g,
-            python: /def\s+(\w+)|class\s+(\w+)/g,
-            java: /public\s+\w+\s+(\w+)\s*\(|class\s+(\w+)/g,
-            cpp: /\w+\s+(\w+)\s*\([^)]*\)\s*{|class\s+(\w+)/g,
-            go: /func\s+(\w+)|type\s+(\w+)\s+struct/g,
-            rust: /fn\s+(\w+)|struct\s+(\w+)|impl\s+(\w+)/g
+            javascript: /\bfunction\s+([a-zA-Z_$][a-zA-Z0-9_$]*)|\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*function|\bclass\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+            typescript: /\bfunction\s+([a-zA-Z_$][a-zA-Z0-9_$]*)|\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*function|\bclass\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+            python: /\bdef\s+([a-zA-Z_][a-zA-Z0-9_]*)|\bclass\s+([a-zA-Z_][a-zA-Z0-9_]*)/g,
+            java: /\bpublic\s+\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(|\bclass\s+([a-zA-Z_][a-zA-Z0-9_]*)/g,
+            cpp: /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*\{|\bclass\s+([a-zA-Z_][a-zA-Z0-9_]*)/g,
+            go: /\bfunc\s+([a-zA-Z_][a-zA-Z0-9_]*)|\btype\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+struct/g,
+            rust: /\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)|\bstruct\s+([a-zA-Z_][a-zA-Z0-9_]*)|\bimpl\s+([a-zA-Z_][a-zA-Z0-9_]*)/g
         };
 
-        const pattern = patterns[language];
+        const pattern = patterns[sanitizedLanguage];
         if (pattern) {
             let match: RegExpExecArray | null;
-            while ((match = pattern.exec(content)) !== null) {
-                const funcName = match?.find(m => m && m !== match?.[0]);
-                if (funcName && typeof funcName === 'string') {
-                    functions.push(funcName.replace(/[^a-zA-Z0-9_]/g, ''));
+            while ((match = pattern.exec(sanitizedContent)) !== null) {
+                for (let i = 1; i < match.length; i++) {
+                    if (match[i] && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(match[i])) {
+                        functions.push(match[i]);
+                        break;
+                    }
                 }
             }
         }
 
-        return functions;
+        return functions.slice(0, 100); // Limit results
     }
 
     private extractImports(content: string, language: string): string[] {
