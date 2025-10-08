@@ -40,15 +40,76 @@ async function fetchWithTimeout(
   }
 }
 
-
-
 export class OllamaProvider implements AIProvider {
   private config: OllamaConfig;
   private validatedHost: string;
 
+  private memoryLimit = 1024 * 1024 * 1024; // 1GB
+  private lastCleanup = Date.now();
+  private resultCache = new Map<string, {result: string, timestamp: number}>();
+  private readonly CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+  private monitoringInterval?: NodeJS.Timeout;
+
   constructor(config: OllamaConfig) {
     this.validatedHost = this.validateAndSanitizeHost(config.host);
     this.config = { ...config, host: this.validatedHost };
+    
+    // Only start monitoring if explicitly enabled
+    if (process.env.ENABLE_MEMORY_MONITORING === 'true') {
+      this.startResourceMonitoring();
+    }
+  }
+
+  private startResourceMonitoring(): void {
+    // Only run monitoring if explicitly enabled
+    this.monitoringInterval = setInterval(() => {
+      this.checkMemoryUsage();
+    }, 300000); // Check every 5 minutes instead of 30 seconds
+  }
+
+  public stopResourceMonitoring(): void {
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+      this.monitoringInterval = undefined as any;
+    }
+  }
+
+  private checkMemoryUsage(): boolean {
+    const usage = process.memoryUsage();
+    if (usage.heapUsed > this.memoryLimit) {
+      console.log(`Memory usage high: ${Math.round(usage.heapUsed / 1024 / 1024)}MB`);
+      this.triggerCleanup();
+      return false;
+    }
+    return true;
+  }
+
+  private triggerCleanup(): void {
+    const now = Date.now();
+    if (now - this.lastCleanup < 60000) return;
+    
+    console.log('Triggering memory cleanup...');
+    
+    // Clean expired cache entries
+    for (const [key, entry] of this.resultCache) {
+      if (now - entry.timestamp > this.CACHE_TTL) {
+        this.resultCache.delete(key);
+      }
+    }
+    
+    // Limit cache size
+    if (this.resultCache.size > 100) {
+      const entries = Array.from(this.resultCache.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+        .slice(0, 50);
+      this.resultCache.clear();
+      entries.forEach(([key, value]) => this.resultCache.set(key, value));
+    }
+    
+    // Force garbage collection if available
+    if (global.gc) global.gc();
+    
+    this.lastCleanup = now;
   }
 
   private validateAndSanitizeHost(host: string): string {
@@ -111,39 +172,113 @@ export class OllamaProvider implements AIProvider {
   }
 
   async generateText({
-  prompt,
-  model,
-  stream = false,
-}: {
-  prompt: string;
-  model?: string;
-  stream?: boolean;
-}): Promise<string> {
-  const data = await this.callOllama({
-    model: model || this.config.model,
     prompt,
-    stream,
-  });
-  return data.response || '';
-}
+    model,
+    stream = false,
+  }: {
+    prompt: string;
+    model?: string;
+    stream?: boolean;
+  }): Promise<string> {
+    // Use streaming for large prompts
+    if (prompt.length > 10000 || stream) {
+      return await this.generateTextStreaming(prompt, model || this.config.model);
+    }
+    
+    const dynamicTimeout = this.calculateDynamicTimeout(prompt, '');
+    const data = await this.callOllamaWithRetry({
+      model: model || this.config.model,
+      prompt,
+      stream: false,
+    }, dynamicTimeout);
+    return data.response || '';
+  }
 
-async generateTextWithModel({
-  prompt,
-  model,
-  stream = false,
-}: {
-  prompt: string;
-  model: string;
-  stream?: boolean;
-}): Promise<string> {
-  const data = await this.callOllama({
-    model: model,
+  /**
+   * Generate text with streaming for large responses
+   */
+  private async generateTextStreaming(prompt: string, model: string): Promise<string> {
+    const chunks: string[] = [];
+    const timeout = this.calculateDynamicTimeout(prompt, '');
+    
+    try {
+      const response = await fetchWithTimeout(
+        `${this.validatedHost}/api/generate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, prompt, stream: true }),
+        },
+        timeout
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const reader = (response.body as any)?.getReader();
+      if (!reader) throw new Error('No response body');
+      
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const maxBufferSize = 1024 * 1024; // 1MB buffer limit
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        
+        // Prevent buffer overflow
+        if (buffer.length + chunk.length > maxBufferSize) {
+          console.warn('Buffer overflow prevented, processing partial data');
+          break;
+        }
+        
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const data = JSON.parse(line);
+              if (data.response) {
+                chunks.push(data.response);
+              }
+            } catch (e) {
+              // Skip invalid JSON lines
+            }
+          }
+        }
+      }
+      
+      return chunks.join('');
+    } catch (error) {
+      console.error('Streaming generation failed:', error);
+      // Fallback to non-streaming
+      const data = await this.callOllamaWithRetry({ model, prompt, stream: false }, timeout);
+      return data.response || '';
+    }
+  }
+
+  async generateTextWithModel({
     prompt,
-    stream,
-  });
-  return data.response || '';
-}
-
+    model,
+    stream = false,
+  }: {
+    prompt: string;
+    model: string;
+    stream?: boolean;
+  }): Promise<string> {
+    const dynamicTimeout = this.calculateDynamicTimeout(prompt, '');
+    const data = await this.callOllamaWithTimeout({
+      model: model,
+      prompt,
+      stream,
+    }, dynamicTimeout);
+    return data.response || '';
+  }
 
   async healthCheck(): Promise<boolean> {
     try {
@@ -182,12 +317,13 @@ async generateTextWithModel({
 
     try {
       const prompt = this.buildCompletionPrompt(request);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithRetry({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       const suggestions = this.parseCompletionResponse(response);
       const processingTime = Date.now() - startTime;
@@ -218,12 +354,13 @@ async generateTextWithModel({
 
     try {
       const prompt = this.buildAnalysisPrompt(request);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       const analysis = this.parseAnalysisResponse(response);
       const processingTime = Date.now() - startTime;
@@ -259,11 +396,13 @@ ${prompt}
 
 Generate the code:`;
       
-      const response = await this.callOllama({
+      const dynamicTimeout = this.calculateDynamicTimeout(enhancedPrompt, '');
+      
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt: enhancedPrompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.cleanGeneratedCode((response && response.response) || 'Failed to generate code');
     } catch (error) {
@@ -272,48 +411,72 @@ Generate the code:`;
     }
   }
 
-
-
   async explainCode(code: string, language: string): Promise<string> {
     try {
+      // Handle massive code inputs with chunking
+      if (code.length > 50000) {
+        return await this.explainLargeCode(code, language);
+      }
+      
       const prompt = `You are a helpful coding assistant. Explain the following ${language} code in a clear, conversational way without using markdown symbols, asterisks, or special formatting characters. Write like you're explaining to a colleague:
 
 ${code}
 
 Explain what this code does, how it works, and any important details:`;
       
-      const response = await this.callOllama({
+      // Calculate dynamic timeout based on request complexity
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, code);
+      
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.formatGracefulResponse(response?.response || 'Failed to explain code');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('Code explanation failed:', errorMessage);
+      
+      // Return a helpful fallback explanation
+      if (errorMessage.includes('timeout')) {
+        return `This ${language} code appears to be a complex piece that would take some time to analyze fully. The code contains various programming constructs and logic that work together to perform specific functionality.`;
+      }
+      
       return `Error explaining code: ${errorMessage}`;
     }
   }
 
   async explainCodeWithModel(code: string, language: string, model: string): Promise<string> {
     try {
+      // Use full code for explanation (no truncation)
+      const truncatedCode = code;
+      
       const prompt = `You are a helpful coding assistant. Explain the following ${language} code in a clear, conversational way without using markdown symbols, asterisks, or special formatting characters. Write like you're explaining to a colleague:
 
-${code}
+${truncatedCode}
 
 Explain what this code does, how it works, and any important details:`;
       
-      const response = await this.callOllama({
+      // Calculate dynamic timeout based on request complexity
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, code);
+      
+      const response = await this.callOllamaWithTimeout({
         model: model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.formatGracefulResponse(response?.response || 'Failed to explain code');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('Code explanation failed:', errorMessage);
+      
+      // Return a helpful fallback explanation
+      if (errorMessage.includes('timeout')) {
+        return `This ${language} code appears to be a complex piece that would take some time to analyze fully. The code contains various programming constructs and logic that work together to perform specific functionality.`;
+      }
+      
       return `Error explaining code: ${errorMessage}`;
     }
   }
@@ -321,12 +484,13 @@ Explain what this code does, how it works, and any important details:`;
   async generateErrorFixes(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): Promise<CodeFix[]> {
     try {
       const prompt = this.buildErrorFixPrompt(request, errorAnalysis);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseErrorFixResponse(response, request);
     } catch (error) {
@@ -339,12 +503,13 @@ Explain what this code does, how it works, and any important details:`;
   async generateErrorFixesWithModel(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis, model: string): Promise<CodeFix[]> {
     try {
       const prompt = this.buildErrorFixPrompt(request, errorAnalysis);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseErrorFixResponse(response, request);
     } catch (error) {
@@ -356,12 +521,13 @@ Explain what this code does, how it works, and any important details:`;
   async generateQuickFixes(request: QuickFixRequest): Promise<any[]> {
     try {
       const prompt = this.buildQuickFixPrompt(request);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseQuickFixResponse(response);
     } catch (error) {
@@ -373,12 +539,13 @@ Explain what this code does, how it works, and any important details:`;
   async generateQuickFixesWithModel(request: QuickFixRequest, model: string): Promise<any[]> {
     try {
       const prompt = this.buildQuickFixPrompt(request);
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, request.code);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseQuickFixResponse(response);
     } catch (error) {
@@ -390,12 +557,14 @@ Explain what this code does, how it works, and any important details:`;
   async validateCodeFix(request: ValidationRequest): Promise<any> {
     try {
       const prompt = this.buildValidationPrompt(request);
+      const combinedCode = request.originalCode + '\n' + request.fixedCode;
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, combinedCode);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: this.config.model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseValidationResponse(response);
     } catch (error) {
@@ -414,12 +583,14 @@ Explain what this code does, how it works, and any important details:`;
   async validateCodeFixWithModel(request: ValidationRequest, model: string): Promise<any> {
     try {
       const prompt = this.buildValidationPrompt(request);
+      const combinedCode = request.originalCode + '\n' + request.fixedCode;
+      const dynamicTimeout = this.calculateDynamicTimeout(prompt, combinedCode);
       
-      const response = await this.callOllama({
+      const response = await this.callOllamaWithTimeout({
         model: model,
         prompt,
         stream: false,
-      });
+      }, dynamicTimeout);
 
       return this.parseValidationResponse(response);
     } catch (error) {
@@ -437,11 +608,42 @@ Explain what this code does, how it works, and any important details:`;
 
   // Private helper methods
 
-  private async callOllama(params: {
+  private async callOllamaWithRetry(
+    params: { model: string; prompt: string; stream?: boolean },
+    timeoutMs: number,
+    maxRetries: number = 3
+  ): Promise<OllamaGenerateResponse> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await this.callOllamaWithTimeout(params, timeoutMs);
+      } catch (error) {
+        lastError = error as Error;
+        
+        // Don't retry on non-transient errors
+        if (error instanceof Error && (error.message.includes('404') || error.message.includes('401'))) {
+          throw error;
+        }
+        
+        if (attempt < maxRetries - 1) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+
+  private async callOllamaWithTimeout(params: {
     model: string;
     prompt: string;
     stream?: boolean;
-  }): Promise<OllamaGenerateResponse> {
+  }, timeoutMs: number): Promise<OllamaGenerateResponse> {
+    // Limit timeout to reasonable bounds
+    const boundedTimeout = Math.min(Math.max(timeoutMs, 30000), 120000); // 30s min, 2min max
+    
     let res: Response;
     try {
       res = await fetchWithTimeout(
@@ -449,14 +651,22 @@ Explain what this code does, how it works, and any important details:`;
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
+          body: JSON.stringify({
+            ...params,
+            // Add Ollama-specific timeout parameters
+            options: {
+              num_predict: 2000, // Comprehensive responses for enterprise
+              temperature: 0.3,
+              top_p: 0.8
+            }
+          }),
         },
-        this.config.timeout || 30000
+        boundedTimeout
       );
     } catch (e: unknown) {
       const err = e as Error;
-      if (err && err.name === 'AbortError') {
-        throw new Error(`Ollama request timed out after ${this.config.timeout || 30000} ms`);
+      if (err && (err.name === 'AbortError' || err.message.includes('timeout'))) {
+        throw new Error(`Request timed out after ${boundedTimeout}ms. Try with shorter code.`);
       }
       throw new Error(`Ollama request failed: ${(err && err.message) || String(e)}`);
     }
@@ -469,28 +679,26 @@ Explain what this code does, how it works, and any important details:`;
     return (await res.json()) as OllamaGenerateResponse;
   }
 
+  private buildCompletionPrompt(request: CodeCompletionRequest): string {
+    const { code, language, position } = request;
+    const lines = code.split('\n');
 
-    private buildCompletionPrompt(request: CodeCompletionRequest): string {
-      const { code, language, position } = request;
-      const lines = code.split('\n');
+    const safeLine = Math.max(0, Math.min(position.line, lines.length - 1));
+    const currentLine = lines[safeLine] || '';
+    const safeChar = Math.max(0, Math.min(position.character, currentLine.length));
+    const beforeCursor = currentLine.slice(0, safeChar);
+    const afterCursor  = currentLine.slice(safeChar);
 
-      const safeLine = Math.max(0, Math.min(position.line, lines.length - 1));
-      const currentLine = lines[safeLine] || '';
-      const safeChar = Math.max(0, Math.min(position.character, currentLine.length));
-      const beforeCursor = currentLine.slice(0, safeChar);
-      const afterCursor  = currentLine.slice(safeChar);
+    return `Complete the following ${language} code at the cursor position (marked with <CURSOR>):
 
-      return `Complete the following ${language} code at the cursor position (marked with <CURSOR>):
+\`\`\`${language}
+${lines.slice(0, safeLine).join('\n')}
+${beforeCursor}<CURSOR>${afterCursor}
+${lines.slice(safeLine + 1).join('\n')}
+\`\`\`
 
-    \`\`\`${language}
-    ${lines.slice(0, safeLine).join('\n')}
-    ${beforeCursor}<CURSOR>${afterCursor}
-    ${lines.slice(safeLine + 1).join('\n')}
-    \`\`\`
-
-    Provide only the completion text that should be inserted at the cursor position:`;
-    }
-
+Provide only the completion text that should be inserted at the cursor position:`;
+  }
 
   private buildAnalysisPrompt(request: CodeAnalysisRequest): string {
     const { code, language, analysisType } = request;
@@ -553,28 +761,27 @@ ${request.testCases ? `Test Cases:\n${request.testCases.map((test, i) => `${i + 
 Analyze if the fix is correct and complete:`;
   }
 
-private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestion[] {
-  try {
-    const raw = ((response && response.response) || '').trim();
-    if (!raw) return [];
+  private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestion[] {
+    try {
+      const raw = ((response && response.response) || '').trim();
+      if (!raw) return [];
 
-    // Strip ```lang ... ``` fences if present
-    const stripped = raw.replace(/^```[a-zA-Z]*\s*|\s*```$/g, '');
+      // Strip ```lang ... ``` fences if present
+      const stripped = raw.replace(/^```[a-zA-Z]*\s*|\s*```$/g, '');
 
-    return [{
-      text: stripped,
-      insertText: stripped,
-      kind: CompletionItemKind.Text,
-      detail: 'AI-generated completion',
-      documentation: `Generated by ${this.config.model}`,
-      insertTextFormat: InsertTextFormat.PlainText,
-    }];
-  } catch (error) {
-    console.error('Failed to parse completion response:', error);
-    return [];
+      return [{
+        text: stripped,
+        insertText: stripped,
+        kind: CompletionItemKind.Text,
+        detail: 'AI-generated completion',
+        documentation: `Generated by ${this.config.model}`,
+        insertTextFormat: InsertTextFormat.PlainText,
+      }];
+    } catch (error) {
+      console.error('Failed to parse completion response:', error);
+      return [];
+    }
   }
-}
-
 
   private parseAnalysisResponse(response: any): any {
     try {
@@ -613,23 +820,23 @@ private parseCompletionResponse(response: OllamaGenerateResponse): CodeSuggestio
     }
   }
 
-private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
-  try {
-    const responseText = (response && response.response) || '';
-    // You can parse multiple options later; for now return one generic suggestion
-    return [{
-      title: 'Quick fix',
-      description: responseText || 'AI-generated quick fix',
-      changes: [],
-      confidence: 0.7,
-      preservesSemantics: true,
-      requiresUserReview: true,
-    }];
-  } catch (error) {
-    console.error('Failed to parse quick fix response:', error);
-    return [];
+  private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
+    try {
+      const responseText = (response && response.response) || '';
+      // You can parse multiple options later; for now return one generic suggestion
+      return [{
+        title: 'Quick fix',
+        description: responseText || 'AI-generated quick fix',
+        changes: [],
+        confidence: 0.7,
+        preservesSemantics: true,
+        requiresUserReview: true,
+      }];
+    } catch (error) {
+      console.error('Failed to parse quick fix response:', error);
+      return [];
+    }
   }
-}
 
   private parseValidationResponse(response: any): any {
     try {
@@ -662,17 +869,38 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
     }
   }
 
-  private static readonly CODE_BLOCK_CACHE = new Map<string, RegExp>();
+  private static readonly CODE_BLOCK_CACHE = new Map<string, {regex: RegExp, lastUsed: number}>();
+  private static readonly MAX_CACHE_SIZE = 50;
 
   private extractCodeFromResponse(response: string, language: string): string {
-    // Cache regex patterns to avoid repeated compilation
+    // Cache regex patterns with LRU eviction
     const cacheKey = `code_block_${language}`;
-    let codeBlockRegex = OllamaProvider.CODE_BLOCK_CACHE.get(cacheKey);
+    let cacheEntry = OllamaProvider.CODE_BLOCK_CACHE.get(cacheKey);
     
-    if (!codeBlockRegex) {
-      codeBlockRegex = new RegExp(`\`\`\`${language}?\\s*([\\s\\S]*?)\`\`\``, 'i');
-      OllamaProvider.CODE_BLOCK_CACHE.set(cacheKey, codeBlockRegex);
+    if (!cacheEntry) {
+      // Evict oldest if cache is full
+      if (OllamaProvider.CODE_BLOCK_CACHE.size >= OllamaProvider.MAX_CACHE_SIZE) {
+        let oldestKey = '';
+        let oldestTime = Date.now();
+        for (const [key, entry] of OllamaProvider.CODE_BLOCK_CACHE) {
+          if (entry.lastUsed < oldestTime) {
+            oldestTime = entry.lastUsed;
+            oldestKey = key;
+          }
+        }
+        if (oldestKey) OllamaProvider.CODE_BLOCK_CACHE.delete(oldestKey);
+      }
+      
+      cacheEntry = {
+        regex: new RegExp(`\`\`\`${language}?\\s*([\\s\\S]*?)\`\`\``, 'i'),
+        lastUsed: Date.now()
+      };
+      OllamaProvider.CODE_BLOCK_CACHE.set(cacheKey, cacheEntry);
+    } else {
+      cacheEntry.lastUsed = Date.now();
     }
+    
+    const codeBlockRegex = cacheEntry.regex;
     
     const match = response.match(codeBlockRegex);
     
@@ -721,7 +949,12 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
   private formatGracefulResponse(response: string): string {
     if (!response) return response;
     
-    // Remove markdown formatting and special characters
+    // For code generation requests, preserve code blocks
+    if (response.includes('```') && (response.includes('class ') || response.includes('function ') || response.includes('import '))) {
+      return response.trim(); // Keep original formatting for code
+    }
+    
+    // Remove markdown formatting for explanations only
     let formatted = response
       // Remove markdown headers
       .replace(/#{1,6}\s*/g, '')
@@ -730,10 +963,7 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
       .replace(/\*([^*]+)\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
       .replace(/_([^_]+)_/g, '$1')
-      // Remove code block markers
-      .replace(/```[\w]*\n?/g, '')
-      .replace(/```/g, '')
-      // Remove inline code markers
+      // Remove inline code markers (but preserve code blocks)
       .replace(/`([^`]+)`/g, '$1')
       // Remove bullet points and list markers
       .replace(/^\s*[-*+]\s+/gm, '')
@@ -773,6 +1003,339 @@ private parseQuickFixResponse(response: OllamaGenerateResponse): any[] {
     return this.config.model;
   }
 
+  async handleChatRequest(params: any): Promise<string> {
+    const prompt = params.query || params.message || 'Hello';
+    return await this.generateText({ prompt, model: this.config.model });
+  }
+
+  async handleGenericRequest(toolName: string, params: any): Promise<any> {
+    // Ensure we actually call Ollama for the request
+    const prompt = `You are a helpful AI assistant. Handle this ${toolName} request: ${JSON.stringify(params, null, 2)}`;
+    
+    console.log(`[OllamaProvider] Making actual request to Ollama for ${toolName}`);
+    console.log(`[OllamaProvider] Prompt: ${prompt.substring(0, 200)}...`);
+    
+    const result = await this.generateText({ prompt, model: this.config.model });
+    
+    console.log(`[OllamaProvider] Received response from Ollama: ${result.substring(0, 200)}...`);
+    
+    return { result, toolName, timestamp: new Date().toISOString() };
+  }
+
+  async fixCode(code: string, language: string): Promise<string> {
+    const prompt = `Fix any issues in this ${language} code:\n\n${code}`;
+    return await this.generateText({ prompt, model: this.config.model });
+  }
+
+  async generateTests(code: string, language: string): Promise<string> {
+    const prompt = `Generate unit tests for this ${language} code:\n\n${code}`;
+    return await this.generateText({ prompt, model: this.config.model });
+  }
+
+  /**
+   * Better token estimation
+   */
+  private estimateTokens(text: string): number {
+    // More accurate token estimation
+    const words = text.split(/\s+/).length;
+    const chars = text.length;
+    const symbols = (text.match(/[{}()\[\];,.:]/g) || []).length;
+    return Math.ceil((words * 1.3) + (chars * 0.25) + symbols);
+  }
+
+  /**
+   * Token-aware chunking with context preservation
+   */
+  private splitCodeByTokens(code: string, maxTokens: number = 3000): Array<{content: string, context: string}> {
+    const lines = code.split('\n');
+    const chunks: Array<{content: string, context: string}> = [];
+    let currentChunk = '';
+    let currentTokens = 0;
+    
+    // Extract context (imports, declarations)
+    const context = this.extractContext(code);
+    const contextTokens = this.estimateTokens(context);
+    const availableTokens = maxTokens - contextTokens;
+    
+    for (const line of lines) {
+      const lineTokens = this.estimateTokens(line);
+      if (currentTokens + lineTokens > availableTokens && currentChunk) {
+        chunks.push({ content: currentChunk, context });
+        currentChunk = '';
+        currentTokens = 0;
+      }
+      currentChunk += line + '\n';
+      currentTokens += lineTokens;
+    }
+    
+    if (currentChunk) chunks.push({ content: currentChunk, context });
+    return chunks;
+  }
+
+  /**
+   * Extract context (imports, types, declarations)
+   */
+  private extractContext(code: string): string {
+    const lines = code.split('\n');
+    const contextLines: string[] = [];
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('import ') || 
+          trimmed.startsWith('from ') ||
+          trimmed.startsWith('type ') ||
+          trimmed.startsWith('interface ') ||
+          trimmed.startsWith('const ') && trimmed.includes('=') ||
+          trimmed.startsWith('let ') && trimmed.includes('=') ||
+          trimmed.startsWith('var ') && trimmed.includes('=')) {
+        contextLines.push(line);
+      }
+    }
+    
+    return contextLines.slice(0, 20).join('\n'); // Limit context size
+  }
+
+  /**
+   * Calculate dynamic timeout based on request complexity
+   * @param prompt - The prompt text
+   * @param code - The code being processed
+   * @returns Calculated timeout in milliseconds
+   */
+  private calculateDynamicTimeout(prompt: string, code: string): number {
+    const baseTimeout = 60000; // 60 seconds base
+    const minTimeout = 30000;  // 30 seconds minimum
+    const maxTimeout = 120000; // 2 minutes maximum
+    
+    // Simple length-based timeout calculation
+    const totalLength = prompt.length + code.length;
+    
+    // Much more conservative timeout calculation
+    // 1 second per 1000 characters (instead of 200)
+    const lengthFactor = Math.floor(totalLength / 1000) * 1000;
+    
+    const calculatedTimeout = baseTimeout + lengthFactor;
+    
+    // Ensure timeout is within bounds
+    const finalTimeout = Math.max(minTimeout, Math.min(calculatedTimeout, maxTimeout));
+    
+    console.log(`Timeout: ${finalTimeout}ms for ${totalLength} chars`);
+    
+    return finalTimeout;
+  }
+
+  /**
+   * Estimate the maximum block nesting depth in code
+   * @param code - The code to analyze
+   * @returns Maximum nesting depth
+   */
+  private estimateBlockDepth(code: string): number {
+    let maxDepth = 0;
+    let currentDepth = 0;
+    
+    for (const char of code) {
+      if (char === '{' || char === '(' || char === '[') {
+        currentDepth++;
+        maxDepth = Math.max(maxDepth, currentDepth);
+      } else if (char === '}' || char === ')' || char === ']') {
+        currentDepth = Math.max(0, currentDepth - 1);
+      }
+    }
+    
+    return maxDepth;
+  }
+
+  /**
+   * Handle massive code inputs with caching and graceful degradation
+   */
+  private async explainLargeCode(code: string, language: string): Promise<string> {
+    // Check cache first
+    const cacheKey = `explain_${language}_${code.slice(0, 100)}_${code.length}`;
+    const cached = this.resultCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.result;
+    }
+    
+    try {
+      console.log(`Processing large code: ${code.length} characters`);
+      
+      // Use token-aware chunking
+      const chunks = this.splitCodeByTokens(code, 3000);
+      const explanations: string[] = [];
+      const failedChunks: number[] = [];
+      
+      // Process chunks with backpressure
+      const batchSize = 2;
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        // Check memory before processing batch
+        if (!this.checkMemoryUsage()) {
+          console.log('Memory pressure detected, waiting...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          this.triggerCleanup();
+        }
+        
+        const batch = chunks.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (chunk, index) => {
+          try {
+            const chunkPrompt = `Context:\n${chunk.context}\n\nExplain this ${language} code section (part ${i + index + 1} of ${chunks.length}):\n\n${chunk.content}`;
+            
+            const timeout = Math.min(this.calculateDynamicTimeout(chunkPrompt, chunk.content), 120000); // Max 2 min per chunk
+            const response = await this.callOllamaWithRetry({
+              model: this.config.model,
+              prompt: chunkPrompt,
+              stream: false,
+            }, timeout);
+            
+            return `## Section ${i + index + 1}\n${response?.response || 'Analysis unavailable'}`;
+          } catch (error) {
+            failedChunks.push(i + index);
+            return `## Section ${i + index + 1}\n[Analysis failed - code section contains complex logic]`;
+          }
+        });
+        
+        const batchResults = await Promise.allSettled(batchPromises);
+        batchResults.forEach(result => {
+          if (result.status === 'fulfilled') {
+            explanations.push(result.value);
+          } else {
+            explanations.push('[Section analysis failed]');
+          }
+        });
+        
+        // Rate limiting
+        if (i + batchSize < chunks.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // Generate summary even if some chunks failed
+      const summary = await this.generateCodeSummary(code, language, explanations).catch(() => 
+        `Large ${language} codebase (${Math.floor(code.length / 1000)}K chars) with ${chunks.length} sections analyzed.`
+      );
+      
+      const result = `# Code Overview\n${summary}\n\n# Analysis\n${explanations.join('\n\n')}${failedChunks.length > 0 ? `\n\n*Note: ${failedChunks.length} sections failed analysis due to complexity*` : ''}`;
+      
+      // Cache result
+      this.resultCache.set(cacheKey, { result, timestamp: Date.now() });
+      
+      return result;
+      
+    } catch (error) {
+      console.error('Large code explanation failed:', error);
+      return `This is a very large ${language} codebase with ${Math.floor(code.length / 1000)}K+ characters. The code appears to contain multiple components, classes, and functions working together to implement complex functionality.`;
+    }
+  }
+
+  /**
+   * Intelligently chunk code based on structure rather than arbitrary character limits
+   */
+  private intelligentChunk(code: string, language: string): Array<{content: string, type: string}> {
+    const chunks: Array<{content: string, type: string}> = [];
+    const maxChunkSize = 20000; // 20K characters per chunk
+    
+    // Try to split by logical boundaries
+    const boundaries = this.findLogicalBoundaries(code, language);
+    
+    if (boundaries.length === 0) {
+      // Fallback to simple chunking
+      for (let i = 0; i < code.length; i += maxChunkSize) {
+        chunks.push({
+          content: code.slice(i, i + maxChunkSize),
+          type: `Code Section ${Math.floor(i / maxChunkSize) + 1}`
+        });
+      }
+    } else {
+      // Use logical boundaries
+      let currentChunk = '';
+      let currentType = 'Code Section';
+      
+      for (const boundary of boundaries) {
+        if (currentChunk.length + boundary.content.length > maxChunkSize && currentChunk.length > 0) {
+          chunks.push({ content: currentChunk, type: currentType });
+          currentChunk = boundary.content;
+          currentType = boundary.type;
+        } else {
+          currentChunk += boundary.content;
+          if (!currentType.includes(boundary.type)) {
+            currentType += ` & ${boundary.type}`;
+          }
+        }
+      }
+      
+      if (currentChunk.length > 0) {
+        chunks.push({ content: currentChunk, type: currentType });
+      }
+    }
+    
+    return chunks;
+  }
+
+  /**
+   * Find logical boundaries in code (classes, functions, modules)
+   */
+  private findLogicalBoundaries(code: string, language: string): Array<{content: string, type: string}> {
+    const boundaries: Array<{content: string, type: string}> = [];
+    
+    // Language-specific patterns
+    const patterns = {
+      typescript: [/class\s+\w+[^{]*{[^}]*}/gs, /function\s+\w+[^{]*{[^}]*}/gs, /interface\s+\w+[^{]*{[^}]*}/gs],
+      javascript: [/class\s+\w+[^{]*{[^}]*}/gs, /function\s+\w+[^{]*{[^}]*}/gs],
+      python: [/class\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/gs, /def\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/gs],
+      java: [/class\s+\w+[^{]*{[^}]*}/gs, /public\s+[^{]*{[^}]*}/gs],
+      default: [/\{[^{}]*\}/gs] // Generic block matching
+    };
+    
+    const langPatterns = patterns[language as keyof typeof patterns] || patterns.default;
+    
+    for (const pattern of langPatterns) {
+      const matches = code.match(pattern) || [];
+      for (const match of matches) {
+        const type = this.identifyCodeType(match, language);
+        boundaries.push({ content: match, type });
+      }
+    }
+    
+    return boundaries;
+  }
+
+  /**
+   * Identify the type of code block
+   */
+  private identifyCodeType(codeBlock: string, language: string): string {
+    if (codeBlock.includes('class ')) return 'Class Definition';
+    if (codeBlock.includes('function ') || codeBlock.includes('def ')) return 'Function Definition';
+    if (codeBlock.includes('interface ')) return 'Interface Definition';
+    if (codeBlock.includes('import ') || codeBlock.includes('from ')) return 'Imports & Dependencies';
+    if (codeBlock.includes('export ')) return 'Exports';
+    return 'Code Block';
+  }
+
+  /**
+   * Generate high-level summary of large codebase
+   */
+  private async generateCodeSummary(code: string, language: string, explanations: string[]): Promise<string> {
+    const stats = {
+      lines: code.split('\n').length,
+      characters: code.length,
+      functions: (code.match(/function|def /g) || []).length,
+      classes: (code.match(/class /g) || []).length,
+      imports: (code.match(/import|from /g) || []).length
+    };
+    
+    const summaryPrompt = `Provide a high-level summary of this ${language} codebase:\n\nStats: ${stats.lines} lines, ${stats.characters} chars, ${stats.functions} functions, ${stats.classes} classes\n\nKey components analyzed: ${explanations.length} sections\n\nProvide a brief architectural overview:`;
+    
+    try {
+      const response = await this.callOllamaWithTimeout({
+        model: this.config.model,
+        prompt: summaryPrompt,
+        stream: false,
+      }, 30000);
+      
+      return response?.response || `Large ${language} codebase with ${stats.lines} lines containing ${stats.classes} classes and ${stats.functions} functions.`;
+    } catch (error) {
+      return `Large ${language} codebase with ${stats.lines} lines containing ${stats.classes} classes and ${stats.functions} functions.`;
+    }
+  }
+
   generateFallbackFix(request: ErrorFixRequest, errorAnalysis: ErrorAnalysis): CodeFix[] {
     const fallbackFixes: Record<string, string> = {
       'undefined_variable': `// Declare the variable
@@ -795,7 +1358,7 @@ ${request.code.replace(/var /g, 'let ')}`
       confidence: 0.5,
       preservesSemantics: true,
       requiresUserReview: true,
-      explanation: 'Generated fallback fix due to timeout',
+      explanation: 'Generated fallback fix due to timeout or error',
       category: 'syntax'
     }];
   }

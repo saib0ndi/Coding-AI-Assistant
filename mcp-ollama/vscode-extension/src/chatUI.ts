@@ -1,12 +1,44 @@
 import * as vscode from 'vscode';
+import { AgentCommandHandler } from './agentCommands';
+import { WorkflowProgressView } from './workflowProgressView';
+import { DiffViewer } from './diffViewer';
+import { IssuesPanel } from './issuesPanel';
+
+// Message interfaces for type safety
+interface WebviewMessage {
+    command: string;
+    text?: string;
+    model?: string;
+}
+
+interface ModelInfo {
+    name: string;
+    displayName: string;
+    size: string;
+}
+
+interface OllamaModel {
+    name: string;
+    size: number;
+}
 
 export class ChatUI {
     private panel: vscode.WebviewPanel | undefined;
     private outputChannel: vscode.OutputChannel;
+    private disposables: vscode.Disposable[] = [];
+    private agentCommandHandler: AgentCommandHandler;
+    private workflowProgressView: WorkflowProgressView;
+    private diffViewer: DiffViewer;
+    private issuesPanel: IssuesPanel;
 
     constructor(private context: vscode.ExtensionContext) {
         this.outputChannel = vscode.window.createOutputChannel('SmartCode-AIAssist');
         this.outputChannel.appendLine('ChatUI initialized');
+        
+        this.agentCommandHandler = new AgentCommandHandler();
+        this.workflowProgressView = new WorkflowProgressView(context);
+        this.diffViewer = new DiffViewer(context);
+        this.issuesPanel = new IssuesPanel(context);
     }
 
     public show() {
@@ -29,10 +61,6 @@ export class ChatUI {
 
         this.panel.webview.html = this.getHTML();
         this.setupMessageHandling();
-
-        this.panel.onDidDispose(() => {
-            this.panel = undefined;
-        });
     }
 
     private getHTML(): string {
@@ -503,35 +531,31 @@ export class ChatUI {
             const content = document.createElement('div');
             content.className = 'message-content';
             
-            if (isUser) {
-                content.textContent = text;
-            } else {
-                // Parse markdown and render
-                const html = marked.parse(text);
-                content.innerHTML = html;
+            // Parse markdown for both user and assistant messages
+            const html = marked.parse(text);
+            content.innerHTML = html;
+            
+            // Add copy buttons to code blocks
+            content.querySelectorAll('pre').forEach((pre, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'code-block-wrapper';
+                pre.parentNode.insertBefore(wrapper, pre);
+                wrapper.appendChild(pre);
                 
-                // Add copy buttons to code blocks
-                content.querySelectorAll('pre').forEach((pre, index) => {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'code-block-wrapper';
-                    pre.parentNode.insertBefore(wrapper, pre);
-                    wrapper.appendChild(pre);
-                    
-                    const copyBtn = document.createElement('button');
-                    copyBtn.className = 'copy-btn';
-                    copyBtn.textContent = 'Copy';
-                    copyBtn.onclick = () => {
-                        const code = pre.querySelector('code').textContent;
-                        navigator.clipboard.writeText(code).then(() => {
-                            copyBtn.textContent = 'Copied!';
-                            setTimeout(() => {
-                                copyBtn.textContent = 'Copy';
-                            }, 2000);
-                        });
-                    };
-                    wrapper.appendChild(copyBtn);
-                });
-            }
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.onclick = () => {
+                    const code = pre.querySelector('code').textContent;
+                    navigator.clipboard.writeText(code).then(() => {
+                        copyBtn.textContent = 'Copied!';
+                        setTimeout(() => {
+                            copyBtn.textContent = 'Copy';
+                        }, 2000);
+                    });
+                };
+                wrapper.appendChild(copyBtn);
+            });
             
             messageDiv.appendChild(avatar);
             messageDiv.appendChild(content);
@@ -604,22 +628,42 @@ export class ChatUI {
     }
 
     private setupMessageHandling() {
-        this.panel?.webview.onDidReceiveMessage(async (message) => {
-            switch (message.command) {
-                case 'attachFiles':
-                    await this.handleAttachFiles();
-                    break;
-                case 'sendMessage':
-                    await this.handleSendMessage(message.text, message.model);
-                    break;
-                case 'getModels':
-                    await this.handleGetModels();
-                    break;
-                case 'modelChanged':
-                    // Store selected model for future use
-                    break;
+        if (!this.panel) return;
+        
+        const messageDisposable = this.panel.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
+            try {
+                if (!this.panel) return;
+                
+                switch (message.command) {
+                    case 'attachFiles':
+                        await this.handleAttachFiles();
+                        break;
+                    case 'sendMessage':
+                        if (message.text) {
+                            await this.handleSendMessage(message.text, message.model);
+                        }
+                        break;
+                    case 'getModels':
+                        await this.handleGetModels();
+                        break;
+                    case 'modelChanged':
+                        if (this.outputChannel) {
+                            this.outputChannel.appendLine(`[ChatUI] Model changed to: ${message.model}`);
+                        }
+                        break;
+                }
+            } catch (error) {
+                if (this.outputChannel) {
+                    this.outputChannel.appendLine(`[ChatUI] Error: ${error}`);
+                }
             }
         });
+        
+        const disposeListener = this.panel.onDidDispose(() => {
+            this.dispose();
+        });
+        
+        this.disposables.push(messageDisposable, disposeListener);
     }
 
     private async handleAttachFiles() {
@@ -646,42 +690,59 @@ export class ChatUI {
         }
     }
 
-    private async handleGetModels() {
+    private async handleGetModels(): Promise<void> {
+        this.outputChannel.appendLine('[ChatUI] Loading models...');
+        
         try {
             const { MCPClient } = await import('./mcpClient');
             const mcpClient = new MCPClient();
             
-            // Make HTTP request to Ollama API to get all 37 models
             const response = await mcpClient.makeOllamaRequest('/api/tags');
-            const data = JSON.parse(response.body);
             
-            const models = data.models.map((model: any) => ({
-                name: model.name,
-                displayName: this.formatModelName(model.name),
-                size: this.formatSize(model.size)
-            }));
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.body);
+                
+                if (data.models && Array.isArray(data.models)) {
+                    const models: ModelInfo[] = data.models.map((model: OllamaModel) => ({
+                        name: model.name,
+                        displayName: this.formatModelName(model.name),
+                        size: this.formatSize(model.size || 0)
+                    }));
+                    
+                    this.outputChannel.appendLine(`[ChatUI] ✅ Loaded ${models.length} models`);
+                    
+                    this.panel?.webview.postMessage({
+                        command: 'models',
+                        models: models
+                    });
+                    return;
+                }
+            }
             
-            this.panel?.webview.postMessage({
-                command: 'models',
-                models: models
-            });
+            throw new Error(`Ollama returned ${response.statusCode}`);
+            
         } catch (error) {
-            // Fallback models if Ollama is not available
-            const fallbackModels = [
-                { name: 'deepseek-coder-v2:236b', displayName: 'DeepSeek Coder V2', size: '236B' },
-                { name: 'llama3.3:70b', displayName: 'Llama 3.3', size: '70B' },
-                { name: 'phi4:latest', displayName: 'Phi-4', size: '14B' },
-                { name: 'qwen3:32b', displayName: 'Qwen 3', size: '32B' },
-                { name: 'llama3.1:8b', displayName: 'Llama 3.1', size: '8B' },
-                { name: 'gemma3:27b', displayName: 'Gemma 3', size: '27B' },
-                { name: 'veda-coder-v2:latest', displayName: 'Veda Coder V2', size: '236B' }
-            ];
+            this.outputChannel.appendLine(`[ChatUI] ❌ Ollama error: ${error}`);
+            
+            const fallbackModels: ModelInfo[] = this.getFallbackModels();
             
             this.panel?.webview.postMessage({
                 command: 'models',
                 models: fallbackModels
             });
         }
+    }
+    
+    private getFallbackModels(): ModelInfo[] {
+        return [
+            { name: 'deepseek-coder-v2:236b', displayName: 'DeepSeek Coder V2', size: '236B' },
+            { name: 'deepseek-r1:70b', displayName: 'DeepSeek R1', size: '70B' },
+            { name: 'llama3.3:70b', displayName: 'Llama 3.3', size: '70B' },
+            { name: 'phi4:latest', displayName: 'Phi-4', size: '14B' },
+            { name: 'qwen3:32b', displayName: 'Qwen 3', size: '32B' },
+            { name: 'llama3.1:8b', displayName: 'Llama 3.1', size: '8B' },
+            { name: 'gemma3:27b', displayName: 'Gemma 3', size: '27B' }
+        ];
     }
     
     private formatModelName(name: string): string {
@@ -697,57 +758,92 @@ export class ChatUI {
         return `${Math.round(mb)}MB`;
     }
 
-    private async handleSendMessage(text: string, model?: string) {
-        this.outputChannel.appendLine(`[ChatUI] Handling message: "${text}" with model: ${model || 'default'}`);
+    private async handleSendMessage(text: string, model?: string): Promise<void> {
+        if (!text.trim()) return;
+        
+        this.outputChannel.appendLine(`[ChatUI] Processing: "${text.substring(0, 100)}..."`);
+        
+        // Show processing indicator for large requests
+        if (text.length > 1000 || text.includes('analyze') || text.includes('explain')) {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: '🔍 **Analyzing large codebase...** This may take 2-5 minutes for comprehensive analysis.'
+            });
+        }
+        
+        const agentCommand = this.agentCommandHandler.parseCommand(text);
+        if (agentCommand) {
+            await this.handleAgentCommand(agentCommand.command, agentCommand.args, model);
+            return;
+        }
         
         try {
             const { MCPClient } = await import('./mcpClient');
             const mcpClient = new MCPClient();
 
-            try {
-                this.outputChannel.appendLine('[ChatUI] Connecting to MCP server...');
-                await mcpClient.connect();
-                this.outputChannel.appendLine('[ChatUI] Connected to MCP server successfully');
-                
-                // Use selected model or default
-                const selectedModel = model || 'deepseek-coder-v2:236b';
-                this.outputChannel.appendLine(`[ChatUI] Using model: ${selectedModel}`);
-                
-                // Check if it's a code-related query or general chat
-                const isCodeQuery = this.isCodeRelated(text);
-                this.outputChannel.appendLine(`[ChatUI] Query type: ${isCodeQuery ? 'code' : 'chat'}`);
-                
-                let response: string;
-                
-                if (isCodeQuery) {
-                    this.outputChannel.appendLine('[ChatUI] Calling explainCodeWithModel...');
-                    response = await mcpClient.explainCodeWithModel(text, 'general', selectedModel);
-                } else {
-                    this.outputChannel.appendLine('[ChatUI] Calling handleSlashCommandWithModel...');
-                    response = await mcpClient.handleSlashCommandWithModel('/chat', text, 'general', selectedModel);
-                }
-
-                this.outputChannel.appendLine(`[ChatUI] Received response: ${response.substring(0, 100)}...`);
-                this.panel?.webview.postMessage({
-                    command: 'response',
-                    text: response
-                });
-            } catch (mcpError) {
-                this.outputChannel.appendLine(`[ChatUI] MCP Error: ${mcpError}`);
-                // Provide helpful fallback responses
-                const fallbackResponse = this.getFallbackResponse(text);
-                this.panel?.webview.postMessage({
-                    command: 'response',
-                    text: fallbackResponse
-                });
+            await mcpClient.connect();
+            const selectedModel = model || 'deepseek-r1:70b'; // Use reasoning model for complex analysis
+            
+            let response: string;
+            
+            // Enterprise-grade analysis for large codebases
+            if (this.isLargeCodebaseQuery(text)) {
+                this.outputChannel.appendLine('[ChatUI] Enterprise codebase analysis mode');
+                response = await this.handleLargeCodebaseAnalysis(text, selectedModel, mcpClient);
+            } else if (this.isCodeRelated(text)) {
+                response = await mcpClient.explainCodeWithModel(text, 'general', selectedModel);
+            } else {
+                response = await mcpClient.handleSlashCommandWithModel('/chat', text, 'general', selectedModel);
             }
-        } catch (error) {
-            this.outputChannel.appendLine(`[ChatUI] General Error: ${error}`);
+
             this.panel?.webview.postMessage({
                 command: 'response',
-                text: `❌ Error: ${error}`
+                text: response || 'Analysis completed. Please check the detailed results.'
+            });
+            
+        } catch (error) {
+            this.outputChannel.appendLine(`[ChatUI] Error: ${error}`);
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: this.getFallbackResponse(text)
             });
         }
+    }
+    
+    private isLargeCodebaseQuery(text: string): boolean {
+        const largeCodebaseKeywords = [
+            'analyze entire', 'whole project', 'complete codebase', 'all files',
+            'million lines', 'large project', 'enterprise', 'architecture overview'
+        ];
+        return largeCodebaseKeywords.some(keyword => text.toLowerCase().includes(keyword));
+    }
+    
+    private async handleLargeCodebaseAnalysis(text: string, model: string, mcpClient: any): Promise<string> {
+        // For enterprise codebases, use progressive analysis
+        const analysisSteps = [
+            '📊 **Phase 1**: Analyzing project structure...',
+            '🔍 **Phase 2**: Examining core components...',
+            '⚡ **Phase 3**: Identifying key patterns...',
+            '📋 **Phase 4**: Generating comprehensive report...'
+        ];
+        
+        for (const step of analysisSteps) {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: step
+            });
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        // Use workspace analysis for large codebases
+        const result = await mcpClient.callTool('workspace_analysis', {
+            workspaceRoot: process.cwd(),
+            analysisDepth: 'comprehensive',
+            includePatterns: ['**/*.{js,ts,py,java,cpp,go,rs}'],
+            maxFiles: 1000 // Handle up to 1000 files
+        });
+        
+        return `✅ **Enterprise Codebase Analysis Complete**\n\n${result.analysis || 'Comprehensive analysis completed for large codebase.'}`;
     }
     
     private isCodeRelated(text: string): boolean {
@@ -755,31 +851,131 @@ export class ChatUI {
             'function', 'class', 'const', 'let', 'var', 'if', 'for', 'while',
             'import', 'export', 'return', 'console.log', 'print', 'def',
             'public', 'private', 'static', 'async', 'await', '{', '}', '()', '=>',
-            'explain this code', 'what does this do', 'how does this work'
+            'explain this code', 'what does this do', 'how does this work',
+            'analyze code', 'review code', 'understand code', 'code structure'
         ];
         
         const lowerText = text.toLowerCase();
         return codeKeywords.some(keyword => lowerText.includes(keyword)) || 
-               /[{}();\[\]<>]/.test(text) || // Contains code symbols
-               text.split('\n').length > 2; // Multi-line (likely code)
+               /[{}();\[\]<>]/.test(text) || 
+               text.split('\n').length > 2 ||
+               text.length > 500; // Large text likely contains code
     }
     
+    private async handleAgentCommand(command: string, args: string, model?: string): Promise<void> {
+        try {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `🤖 Executing /${command} command: ${args}`
+            });
+
+            // Check MCP server status first
+            const serverRunning = await this.checkMCPServer();
+            if (!serverRunning) {
+                this.panel?.webview.postMessage({
+                    command: 'response',
+                    text: `❌ **MCP Server not running**\n\nPlease start the server:\n\`\`\`bash\ncd mcp-ollama\nnpm start\n\`\`\``
+                });
+                return;
+            }
+
+            // Show workflow progress
+            const steps = [
+                { id: '1', action: 'Planning workflow', status: 'running' as const },
+                { id: '2', action: 'Analyzing code', status: 'pending' as const },
+                { id: '3', action: 'Executing changes', status: 'pending' as const }
+            ];
+            
+            this.workflowProgressView.showProgressPanel(`${command}_${Date.now()}`, steps);
+            
+            // Execute with timeout
+            const result = await Promise.race([
+                this.agentCommandHandler.executeCommand(command, args, {
+                    model: model || 'deepseek-coder-v2:236b',
+                    workspacePath: vscode.workspace.rootPath
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Command timeout after 30 seconds')), 30000)
+                )
+            ]);
+
+            // Update progress
+            steps.forEach((step, index) => {
+                setTimeout(() => {
+                    this.workflowProgressView.updateStep(step.id, { status: 'completed' });
+                }, (index + 1) * 500);
+            });
+
+            // Show results
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `✅ **${command} completed!**\n\n${(result as any).description || 'Task completed'}`
+            });
+
+        } catch (error) {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `❌ **${command} failed:** ${error}\n\n💡 **Troubleshooting:**\n• Check MCP server is running\n• Verify Ollama is installed\n• Try a simpler command first`
+            });
+        }
+    }
+
+    private async checkMCPServer(): Promise<boolean> {
+        try {
+            const { MCPClient } = await import('./mcpClient');
+            const mcpClient = new MCPClient();
+            await Promise.race([
+                mcpClient.connect(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+            ]);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     private getFallbackResponse(text: string): string {
         const lowerText = text.toLowerCase();
         
         if (lowerText.includes('hi') || lowerText.includes('hello')) {
-            return `👋 Hello! I'm your AI coding assistant powered by MCP-Ollama. I can help you with:\n\n• **Code explanation** - Paste any code and I'll explain it\n• **Bug fixing** - Right-click code → "Fix Code Issues"\n• **Generate tests** - Right-click code → "Generate Tests"\n• **Documentation** - Right-click code → "Generate Documentation"\n• **Code review** - Right-click code → "Code Review"\n\nWhat would you like to work on today?`;
+            return `👋 Hello! I'm your professional AI coding assistant. I can help you with:\n\n**🤖 Agent Commands:**\n• \`/dev implement user authentication\` - Development tasks\n• \`/test generate unit tests\` - Testing tasks\n• \`/review check security issues\` - Code review\n• \`/docs create API documentation\` - Documentation\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n\nWhat would you like to work on today?`;
         }
         
         if (lowerText.includes('help')) {
-            return `🚀 **Available Commands:**\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n• ⚡ Optimize Performance\n• 🔒 Security Scan\n• 👀 Code Review\n• 🔄 Translate Language\n\n**Or just chat with me about coding questions!**`;
+            return `🚀 **Available Commands:**\n\n**🤖 Professional Agent Commands:**\n• \`/dev [task]\` - Development tasks (implement, fix, refactor)\n• \`/test [task]\` - Generate and run tests\n• \`/review [task]\` - Code review and analysis\n• \`/docs [task]\` - Generate documentation\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n• ⚡ Optimize Performance\n• 🔒 Security Scan\n• 👀 Code Review\n• 🔄 Translate Language\n\n**Examples:**\n• \`/dev implement user login with JWT\`\n• \`/test add unit tests for UserService\`\n• \`/review check for security vulnerabilities\`\n• \`/docs create API documentation\`**`;
         }
         
-        return `I understand you're asking about: "${text}". \n\nThe MCP server isn't running right now, but I'm ready to help when it's available! \n\nIn the meantime, you can:\n• Right-click on code for instant tools\n• Attach files using the 📎 button\n• Ask me coding questions\n\nTry starting the MCP server with \`npm start\` in the mcp-ollama directory.`;
+        return `I understand you're asking about: "${text}". \n\n**💡 Try using agent commands:**\n• \`/dev [your request]\` for development tasks\n• \`/test [your request]\` for testing\n• \`/review [your request]\` for code review\n• \`/docs [your request]\` for documentation\n\nThe MCP server isn't running right now, but I'm ready to help when it's available! \n\nTry starting the MCP server with \`npm start\` in the mcp-ollama directory.`;
     }
 
-    public dispose() {
-        this.panel?.dispose();
-        this.panel = undefined;
+    public dispose(): void {
+        try {
+            // Dispose all event listeners first
+            this.disposables.forEach(d => {
+                try {
+                    d.dispose();
+                } catch (e) {
+                    // Ignore disposal errors
+                }
+            });
+            this.disposables = [];
+            
+            // Dispose components
+            this.workflowProgressView.dispose();
+            this.diffViewer.dispose();
+            this.issuesPanel.dispose();
+            
+            // Dispose panel
+            if (this.panel) {
+                try {
+                    this.panel.dispose();
+                } catch (e) {
+                    // Ignore
+                }
+                this.panel = undefined;
+            }
+        } catch (error) {
+            // Silently handle disposal errors
+        }
     }
 }

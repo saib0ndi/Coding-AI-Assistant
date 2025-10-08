@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import * as https from 'https';
 import * as http from 'http';
 import * as fs from 'fs';
@@ -18,11 +21,14 @@ interface InlineSuggestionParams {
 export class MCPClient {
     private baseUrl: string;
     private connected = false;
+    private mcpClient?: Client;
 
     constructor() {
         const config = vscode.workspace.getConfiguration('mcp-ollama');
         const useHttps = config.get<boolean>('useHttps', false);
-        const defaultUrl = useHttps ? 'https://localhost:3077' : 'http://localhost:3077';
+        const defaultHost = config.get<string>('serverHost', 'localhost');
+        const defaultPort = config.get<number>('serverPort', 3077);
+        const defaultUrl = `${useHttps ? 'https' : 'http'}://${defaultHost}:${defaultPort}`;
         const serverUrl = config.get<string>('serverUrl') || defaultUrl;
         this.baseUrl = this.validateServerUrl(serverUrl);
     }
@@ -32,33 +38,54 @@ export class MCPClient {
             const parsed = new URL(url);
             // Only allow http/https protocols
             if (!['http:', 'https:'].includes(parsed.protocol)) {
-                return 'http://localhost:3077';
+                const config = vscode.workspace.getConfiguration('mcp-ollama');
+                const defaultHost = config.get<string>('serverHost', 'localhost');
+                const defaultPort = config.get<number>('serverPort', 3077);
+                return `http://${defaultHost}:${defaultPort}`;
             }
-            // Allow localhost and specific safe hosts
-            const allowedHosts = ['localhost', '127.0.0.1', '::1', '10.10.110.25'];
+            // Get allowed hosts from configuration
+            const config = vscode.workspace.getConfiguration('mcp-ollama');
+            const allowedHosts = config.get<string[]>('allowedHosts', ['localhost', '127.0.0.1', '::1']);
+            const defaultHost = config.get<string>('serverHost', 'localhost');
+            const defaultPort = config.get<number>('serverPort', 3077);
+            
             if (!allowedHosts.includes(parsed.hostname)) {
-                return 'http://localhost:3077';
+                return `http://${defaultHost}:${defaultPort}`;
             }
             return url;
         } catch {
-            return 'http://localhost:3077';
+            const config = vscode.workspace.getConfiguration('mcp-ollama');
+            const defaultHost = config.get<string>('serverHost', 'localhost');
+            const defaultPort = config.get<number>('serverPort', 3077);
+            return `http://${defaultHost}:${defaultPort}`;
         }
     }
 
     async connect(): Promise<void> {
         try {
+            // First check HTTP health endpoint
             const response = await this.makeRequest('GET', '/health');
             if (response.statusCode === 200) {
                 this.connected = true;
-                console.log('Connected to MCP-Ollama server');
+                console.log('✅ Connected to MCP-Ollama server');
             } else {
-                throw new Error('Server health check failed');
+                throw new Error(`Server health check failed: ${response.statusCode}`);
             }
         } catch (error) {
             this.connected = false;
             const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
-            console.error(`Failed to connect to MCP server: ${sanitizedError}`);
-            throw error;
+            console.error(`❌ Failed to connect to MCP server: ${sanitizedError}`);
+            throw error; // Throw error to indicate connection failure
+        }
+    }
+
+    isConnected(): boolean {
+        return this.connected;
+    }
+
+    async ensureConnected(): Promise<void> {
+        if (!this.connected) {
+            await this.connect();
         }
     }
 
@@ -97,7 +124,7 @@ export class MCPClient {
             });
 
             req.on('error', reject);
-            req.setTimeout(60000, () => {
+            req.setTimeout(30000, () => {
                 req.destroy();
                 reject(new Error('Request timeout'));
             });
@@ -130,8 +157,11 @@ export class MCPClient {
             console.log('Local certificate not found, using insecure agent for localhost');
         }
 
-        // For localhost development, allow self-signed certificates
-        if (this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1')) {
+        // For development environments, allow self-signed certificates
+        const allowSelfSigned = config.get<boolean>('allowSelfSignedCerts', true);
+        const devHosts = ['localhost', '127.0.0.1', '::1'];
+        
+        if (allowSelfSigned && devHosts.some(host => this.baseUrl.includes(host))) {
             return new https.Agent({
                 rejectUnauthorized: false
             });
@@ -140,12 +170,17 @@ export class MCPClient {
         return undefined;
     }
 
-    private async callTool(name: string, args: any): Promise<any> {
+    async callTool(name: string, args: any): Promise<any> {
+        return this.callToolInternal(name, args);
+    }
+
+    private async callToolInternal(name: string, args: any): Promise<any> {
         if (!this.connected) {
             throw new Error('MCP client not connected');
         }
 
         try {
+            // Use HTTP API for now since MCP SDK requires stdio transport
             const response = await this.makeRequest('POST', `/tools/${name}`, JSON.stringify(args));
             
             if (response.statusCode !== 200) {
@@ -185,7 +220,7 @@ export class MCPClient {
                 return [{ text: 'g("Hello World");', confidence: 0.9 }];
             }
             if (lastLine.includes('function ')) {
-                return [{ text: '() {\n    // TODO: Implement\n    return null;\n}', confidence: 0.8 }];
+                return [{ text: '() {\n    // Implementation needed\n    return null;\n}', confidence: 0.8 }];
             }
             if (lastLine.includes('const ')) {
                 return [{ text: 'value = ', confidence: 0.7 }];
@@ -209,6 +244,10 @@ export class MCPClient {
 
     async explainCode(code: string, language: string): Promise<string> {
         try {
+            await this.ensureConnected();
+            if (!this.connected) {
+                return 'MCP server not available. Please check server connection.';
+            }
             const result = await this.callTool('explain_code', { code, language, detail: 'detailed' });
             return result.explanation || 'No explanation available';
         } catch (error) {
@@ -309,43 +348,159 @@ export class MCPClient {
         return sanitized;
     }
     
+    async executeAgentTask(params: { description: string; context: any }): Promise<any> {
+        try {
+            return await this.callTool('agent_execute', {
+                description: params.description,
+                type: 'implement',
+                context: params.context,
+                priority: 'high'
+            });
+        } catch (error) {
+            const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
+            console.error(`Error executing agent task: ${sanitizedError}`);
+            throw error;
+        }
+    }
+
+    // LSP Integration Methods
+    async getLSPDiagnostics(uri: string, code: string, language: string): Promise<any> {
+        try {
+            return await this.callTool('handleVSCodeLSPIntegration', {
+                uri, code, language, action: 'diagnostics'
+            });
+        } catch (error) {
+            console.error('Error getting LSP diagnostics:', error);
+            return { diagnostics: [] };
+        }
+    }
+
+    async getLSPSymbols(uri: string, code: string): Promise<any> {
+        try {
+            return await this.callTool('handleVSCodeLSPIntegration', {
+                uri, code, action: 'symbols'
+            });
+        } catch (error) {
+            console.error('Error getting LSP symbols:', error);
+            return [];
+        }
+    }
+
+    async getLSPCompletion(uri: string, code: string, language: string, position: any): Promise<any> {
+        try {
+            return await this.callTool('handleVSCodeLSPIntegration', {
+                uri, code, language, position, action: 'completion'
+            });
+        } catch (error) {
+            console.error('Error getting LSP completion:', error);
+            return { completion: '', symbols: [] };
+        }
+    }
+
+    // Semantic Integration Methods
+    async findSimilarCode(query: string, language: string, workspacePath?: string): Promise<any> {
+        try {
+            return await this.callTool('handleSemanticProvider', {
+                query, language, workspacePath
+            });
+        } catch (error) {
+            console.error('Error finding similar code:', error);
+            return { matches: [] };
+        }
+    }
+
+    async semanticSearch(query: string, limit: number = 5): Promise<any> {
+        try {
+            return await this.callTool('enhancedSemanticSearch', {
+                query, limit
+            });
+        } catch (error) {
+            console.error('Error in semantic search:', error);
+            return { matches: [], count: 0 };
+        }
+    }
+
+    // Enhanced methods using both LSP and Semantic
+    async getEnhancedCompletion(code: string, language: string, context: any, filePath?: string): Promise<any> {
+        try {
+            return await this.callTool('enhancedCodeCompletion', {
+                code, language, context, filePath
+            });
+        } catch (error) {
+            console.error('Error getting enhanced completion:', error);
+            return { code: '', quality: 0, isValid: false };
+        }
+    }
+
+    async getCodeAnalysis(code: string, language: string, filePath?: string): Promise<any> {
+        try {
+            return await this.callTool('enhancedCodeAnalysis', {
+                code, language, filePath
+            });
+        } catch (error) {
+            console.error('Error getting code analysis:', error);
+            return { diagnostics: [], symbols: [], securityIssues: [], quality: { overall: 0 } };
+        }
+    }
+
     async makeOllamaRequest(path: string): Promise<{statusCode: number, statusMessage: string, body: string}> {
         return new Promise((resolve, reject) => {
             const config = vscode.workspace.getConfiguration('mcp-ollama');
-            const ollamaHost = config.get<string>('host') || 'http://10.10.110.25:11434';
-            const url = new URL(ollamaHost + path);
-            const isHttps = url.protocol === 'https:';
-            const client = isHttps ? https : http;
+            const ollamaHost = config.get<string>('host') || config.get<string>('ollamaHost', 'http://10.10.110.25:11434');
             
-            const options = {
-                hostname: url.hostname,
-                port: url.port || (isHttps ? 443 : 80),
-                path: url.pathname + url.search,
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            };
+            try {
+                const url = new URL(ollamaHost + path);
+                const isHttps = url.protocol === 'https:';
+                const client = isHttps ? https : http;
+                
+                const options = {
+                    hostname: url.hostname,
+                    port: url.port || (isHttps ? 443 : 80),
+                    path: url.pathname + url.search,
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                };
 
-            const req = client.request(options, (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    resolve({
-                        statusCode: res.statusCode || 0,
-                        statusMessage: res.statusMessage || '',
-                        body: data
+                const req = client.request(options, (res) => {
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => {
+                        resolve({
+                            statusCode: res.statusCode || 0,
+                            statusMessage: res.statusMessage || '',
+                            body: data
+                        });
                     });
                 });
-            });
 
-            req.on('error', reject);
-            req.setTimeout(5000, () => {
-                req.destroy();
-                reject(new Error('Request timeout'));
-            });
+                req.on('error', (error) => {
+                    reject(new Error(`Ollama connection failed: ${error.message}`));
+                });
+                
+                req.setTimeout(15000, () => {
+                    req.destroy();
+                    reject(new Error('Ollama timeout'));
+                });
 
-            req.end();
+                req.end();
+            } catch (error) {
+                reject(new Error(`Invalid Ollama URL: ${ollamaHost}`));
+            }
         });
+    }
+
+    async getAvailableModels(): Promise<string[]> {
+        try {
+            const response = await this.makeOllamaRequest('/api/tags');
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.body);
+                return data.models?.map((m: any) => m.name) || [];
+            }
+            return [];
+        } catch (error) {
+            return [];
+        }
     }
 }

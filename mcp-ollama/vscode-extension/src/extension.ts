@@ -11,6 +11,10 @@ import { ContextAnalyzer } from './contextAnalyzer';
 import { MultiLineGenerator } from './multiLineGenerator';
 import { CopilotLabs } from './copilotLabs';
 import { ASTParser } from './astParser';
+import { ServerManager } from './serverManager';
+import { LSPIntegration } from './lsp/LSPIntegration';
+import { ResponseValidator } from './quality/ResponseValidator';
+import { SemanticProvider } from './semantic/SemanticProvider';
 
 // Global variables for extension services
 let mcpClient: MCPClient | undefined;
@@ -25,12 +29,23 @@ let contextAnalyzer: ContextAnalyzer | undefined;
 let multiLineGenerator: MultiLineGenerator | undefined;
 let copilotLabs: CopilotLabs | undefined;
 let astParser: ASTParser | undefined;
+let serverManager: ServerManager | undefined;
+let lspIntegration: LSPIntegration | undefined;
+let responseValidator: ResponseValidator | undefined;
+let semanticProvider: SemanticProvider | undefined;
 
 // Output channel for logging
 let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext) {
     console.log('MCP-Ollama Copilot extension activated');
+
+    // Check if extension is enabled
+    const config = vscode.workspace.getConfiguration('mcp-ollama');
+    if (!config.get('enabled', true)) {
+        console.log('MCP-Ollama extension is disabled');
+        return;
+    }
 
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel('MCP-Ollama Copilot');
@@ -42,14 +57,24 @@ export async function activate(context: vscode.ExtensionContext) {
         telemetryManager = new TelemetryManager();
         contextAnalyzer = new ContextAnalyzer();
         astParser = new ASTParser();
+        serverManager = new ServerManager();
         multiLineGenerator = new MultiLineGenerator(mcpClient, contextAnalyzer);
         copilotLabs = new CopilotLabs(mcpClient);
+        lspIntegration = new LSPIntegration(mcpClient);
+        responseValidator = new ResponseValidator();
+        semanticProvider = new SemanticProvider(mcpClient);
         suggestionProvider = new InlineSuggestionProvider(mcpClient);
         inlineCompletionProvider = new InlineCompletionProvider(mcpClient);
         chatProvider = new CopilotChatProvider(mcpClient);
         streamingClient = new StreamingClient(mcpClient);
         workspaceAnalyzer = new WorkspaceAnalyzer(mcpClient);
         chatUI = new ChatUI(context);
+        
+        // Disable automatic document event handlers to prevent infinite loops
+        outputChannel.appendLine('Document event handlers disabled to prevent crashes');
+        
+        // Prevent document event loops by not registering onDidOpenTextDocument
+        // This fixes the "Aborted()" error spam in console
 
         // Register inline completion providers
         const completionProvider = vscode.languages.registerInlineCompletionItemProvider(
@@ -488,8 +513,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (!editor || !astParser) return;
                 
                 const ast = astParser.parseDocument(editor.document);
-                const symbols = astParser.getAvailableSymbols(ast, editor.selection.active);
+                if (!ast) {
+                    vscode.window.showInformationMessage('AST analysis not supported for this file type');
+                    return;
+                }
                 
+                const symbols = astParser.getAvailableSymbols(ast, editor.selection.active);
                 vscode.window.showInformationMessage(`Found ${symbols.length} symbols: ${symbols.slice(0, 5).join(', ')}`);
             }),
 
@@ -606,6 +635,103 @@ export async function activate(context: vscode.ExtensionContext) {
                 } catch (error) {
                     vscode.window.showErrorMessage('Code review failed');
                 }
+            }),
+
+            // Agent Mode Commands
+            vscode.commands.registerCommand('mcp-ollama.toggleAgentMode', async () => {
+                const config = vscode.workspace.getConfiguration('mcp-ollama');
+                const currentMode = config.get('agentMode', false);
+                await config.update('agentMode', !currentMode, true);
+                
+                const status = !currentMode ? '🤖 ACTIVATED' : '💤 DEACTIVATED';
+                vscode.window.showInformationMessage(`Agent Mode ${status}`);
+                
+                if (!currentMode) {
+                    vscode.window.showInformationMessage(
+                        '🤖 Agent Mode Active! Give me instructions and I\'ll execute them autonomously.',
+                        'Open Chat'
+                    ).then(selection => {
+                        if (selection === 'Open Chat') {
+                            vscode.commands.executeCommand('mcp-ollama.showChatPanel');
+                        }
+                    });
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.startServer', async () => {
+                try {
+                    if (serverManager) {
+                        const port = await serverManager.startServer();
+                        vscode.window.showInformationMessage(`🚀 MCP Server started on port ${port}`);
+                    } else {
+                        vscode.window.showErrorMessage('Server manager not initialized');
+                    }
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to start server: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.executeAgentTask', async () => {
+                const instruction = await vscode.window.showInputBox({
+                    prompt: '🤖 Agent Instruction',
+                    placeHolder: 'e.g., "Create a user authentication system with tests"',
+                    ignoreFocusOut: true
+                });
+                
+                if (!instruction) return;
+                
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                const editor = vscode.window.activeTextEditor;
+                
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: '🤖 Agent executing task...',
+                    cancellable: false
+                }, async (progress) => {
+                    try {
+                        if (!mcpClient) {
+                            throw new Error('MCP client not initialized');
+                        }
+                        
+                        await mcpClient.connect();
+                        
+                        progress.report({ message: 'Planning workflow...' });
+                        
+                        const result = await mcpClient.executeAgentTask({
+                            description: instruction,
+                            context: {
+                                workspacePath: workspaceFolder?.uri.fsPath || process.cwd(),
+                                language: editor?.document.languageId || 'typescript',
+                                currentFile: editor?.document.fileName
+                            }
+                        });
+                        
+                        progress.report({ message: 'Task completed!' });
+                        
+                        // Show results
+                        const doc = await vscode.workspace.openTextDocument({
+                            content: `🤖 Agent Task Results\n\n**Task**: ${instruction}\n\n**Status**: ${result.success ? '✅ SUCCESS' : '❌ FAILED'}\n\n**Summary**: ${result.summary}\n\n**Files Modified**: ${result.filesModified?.length || 0}\n${result.filesModified?.map((f: string) => `- ${f}`).join('\n') || ''}\n\n**Steps Executed**: ${result.steps?.length || 0}\n${result.steps?.map((s: any) => `- ${s.action} (${s.status})`).join('\n') || ''}`,
+                            language: 'markdown'
+                        });
+                        
+                        await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                        
+                        if (result.success) {
+                            vscode.window.showInformationMessage(
+                                `🎉 Agent completed task successfully! Modified ${result.filesModified?.length || 0} files.`
+                            );
+                        } else {
+                            vscode.window.showErrorMessage(
+                                `❌ Agent task failed: ${result.error || 'Unknown error'}`
+                            );
+                        }
+                        
+                    } catch (error) {
+                        vscode.window.showErrorMessage(
+                            `🤖 Agent execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+                        );
+                    }
+                });
             })
         ];
 
@@ -619,7 +745,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         // Add all disposables to context
-        const disposables = [
+        const allDisposables = [
             completionProvider,
             enhancedCompletionProvider,
             outputChannel,
@@ -627,14 +753,22 @@ export async function activate(context: vscode.ExtensionContext) {
         ];
 
         if (chatProviderRegistration) {
-            disposables.push(chatProviderRegistration);
+            allDisposables.push(chatProviderRegistration);
         }
 
-        context.subscriptions.push(...disposables);
+        context.subscriptions.push(...allDisposables);
 
-        // Skip MCP connection during activation to prevent fetch errors
-        outputChannel.appendLine('Extension activation completed successfully (MCP connection will be established on first use)');
-        vscode.window.showInformationMessage('MCP-Ollama Copilot activated successfully');
+        // Connect to MCP server
+        try {
+            outputChannel.appendLine('Connecting to MCP server...');
+            await mcpClient.connect();
+            outputChannel.appendLine('Successfully connected to MCP server');
+        } catch (error) {
+            outputChannel.appendLine(`Warning: Failed to connect to MCP server: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            outputChannel.appendLine('Extension will work with limited functionality');
+        }
+        
+        outputChannel.appendLine('Extension activation completed successfully');
 
     } catch (error) {
         const errorMsg = `Failed to activate MCP-Ollama extension: ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -712,8 +846,12 @@ export async function deactivate() {
         if (copilotLabs) {
             copilotLabs.dispose();
         }
+        if (serverManager) {
+            await serverManager.stopServer();
+        }
         copilotLabs = undefined;
         astParser = undefined;
+        serverManager = undefined;
     }
 }
 

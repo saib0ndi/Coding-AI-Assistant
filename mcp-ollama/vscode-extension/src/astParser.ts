@@ -11,18 +11,29 @@ export interface ASTNode {
 
 export class ASTParser {
     
-    parseDocument(document: vscode.TextDocument): ASTNode {
+    parseDocument(document: vscode.TextDocument): ASTNode | null {
         const text = document.getText();
         const language = document.languageId;
         
-        switch (language) {
-            case 'javascript':
-            case 'typescript':
-                return this.parseJavaScript(text, document);
-            case 'python':
-                return this.parsePython(text, document);
-            default:
-                return this.parseGeneric(text, document);
+        // Skip unsupported file types to prevent tracking errors
+        const unsupportedTypes = ['json', 'jsonc', 'xml', 'yaml', 'markdown', 'plaintext'];
+        if (unsupportedTypes.includes(language)) {
+            return null;
+        }
+        
+        try {
+            switch (language) {
+                case 'javascript':
+                case 'typescript':
+                    return this.parseJavaScript(text, document);
+                case 'python':
+                    return this.parsePython(text, document);
+                default:
+                    return this.parseGeneric(text, document);
+            }
+        } catch (error) {
+            console.error(`AST parsing failed for ${document.fileName}:`, error);
+            return null;
         }
     }
 
@@ -230,8 +241,8 @@ export class ASTParser {
         return match ? match[1].length : 0;
     }
 
-    findNodeAtPosition(ast: ASTNode, position: vscode.Position): ASTNode | null {
-        if (!ast.range.contains(position)) {
+    findNodeAtPosition(ast: ASTNode | null, position: vscode.Position): ASTNode | null {
+        if (!ast || !ast.range.contains(position)) {
             return null;
         }
         
@@ -246,8 +257,10 @@ export class ASTParser {
         return ast;
     }
 
-    getAvailableSymbols(ast: ASTNode, position: vscode.Position): string[] {
+    getAvailableSymbols(ast: ASTNode | null, position: vscode.Position): string[] {
         const symbols: string[] = [];
+        
+        if (!ast) return symbols;
         
         function collectSymbols(node: ASTNode) {
             if (node.name && node.range.end.isBefore(position)) {

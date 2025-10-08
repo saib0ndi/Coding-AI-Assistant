@@ -3,7 +3,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config({ override: false });
 
-import { MCPServer } from './server/MCPServer.js';
+import { MCPServerEnhanced } from './server/MCPServerEnhanced.js';
 import { HTTPServer } from './server/HTTPServer.js';
 import { OllamaConfig, ModelConfig } from './types/index.js';
 import { Logger } from './utils/Logger.js';
@@ -22,7 +22,7 @@ async function main() {
     
     const parsePort = (value: string | undefined): number => {
       const parsed = Number(value);
-      const defaultPort = Number(process.env.DEFAULT_MCP_PORT) || 3077;
+      const defaultPort = 3077;
       return isNaN(parsed) || parsed <= 0 || parsed > 65535 ? defaultPort : parsed;
     };
 
@@ -56,19 +56,35 @@ async function main() {
       }
     };
 
-    const ollamaHost = process.env.OLLAMA_HOST || `https://localhost:${process.env.OLLAMA_PORT || 11434}`;
+    const ollamaHost = process.env.OLLAMA_HOST || 'http://10.10.110.25:11434';
     const modelConfigs = await fetchAvailableModels(ollamaHost);
 
     // Dynamic model selection based on availability and performance
     const selectOptimalModel = (models: ModelConfig[]): string => {
       if (process.env.OLLAMA_MODEL) return process.env.OLLAMA_MODEL;
       
-      // Prefer coding models
-      const codingModels = models.filter(m => 
-        m.name.includes('coder') || m.name.includes('code') || m.name.includes('deepseek')
+      // Prefer smaller, faster models for better responsiveness
+      const fastModels = models.filter(m => 
+        m.name.includes('llama3.1:8b') || 
+        m.name.includes('qwen2.5:14b') ||
+        m.name.includes('deepseek-coder-v2:236b') ||
+        m.name.includes('llama3.2')
       );
       
-      return codingModels[0]?.name || models[0]?.name || 'deepseek-coder-v2:236b';
+      // Prioritize by speed (smaller models first)
+      const priorityOrder = [
+        'llama3.1:8b-instruct-q4_K_M',
+        'llama3.2:latest', 
+        'qwen2.5:14b-instruct-q4_K_M',
+        'deepseek-coder-v2:236b'
+      ];
+      
+      for (const preferred of priorityOrder) {
+        const found = models.find(m => m.name === preferred);
+        if (found) return found.name;
+      }
+      
+      return fastModels[0]?.name || models[0]?.name || 'llama3.1:8b-instruct-q4_K_M';
     };
     
     const primaryModel = selectOptimalModel(modelConfigs);
@@ -90,8 +106,8 @@ async function main() {
     }
 
     // ---- Create servers ----
-    const mcpServer = new MCPServer(config);
-    const httpServer = new HTTPServer(config, parsePort(process.env.MCP_SERVER_PORT));
+    const mcpServer = new MCPServerEnhanced(config);
+    const httpServer = new HTTPServer(config, parsePort(process.env.MCP_SERVER_PORT) || 3077);
 
     // ---- Graceful shutdown ----
     const graceful = async (signal: string) => {

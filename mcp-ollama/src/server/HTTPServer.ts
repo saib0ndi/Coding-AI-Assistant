@@ -1,6 +1,7 @@
-import * as http from 'http';
-import * as https from 'https';
-import * as fs from 'fs';
+import http from 'http';
+import https from 'https';
+import fs from 'fs';
+import { URL } from 'url';
 import { MCPServer } from './MCPServer.js';
 import { Logger } from '../utils/Logger.js';
 import { OllamaConfig } from '../types/index.js';
@@ -12,7 +13,7 @@ export class HTTPServer {
     private port: number;
     private useHttps: boolean;
 
-    constructor(config: OllamaConfig, port = Number(process.env.DEFAULT_HTTP_PORT || 3077)) {
+    constructor(config: OllamaConfig, port = 3077) {
         this.logger = new Logger();
         this.port = port;
         this.mcpServer = new MCPServer(config);
@@ -24,7 +25,7 @@ export class HTTPServer {
             this.server.timeout = 120000; // 2 minutes for AI responses
         } else {
             this.server = http.createServer(this.handleRequest.bind(this));
-        this.server.timeout = 120000; // 2 minutes for AI responses
+            this.server.timeout = 120000; // 2 minutes for AI responses
         }
     }
 
@@ -46,6 +47,8 @@ export class HTTPServer {
         try {
             if (url.pathname === '/health') {
                 await this.handleHealth(req, res);
+            } else if (url.pathname === '/tools/agent_execute') {
+                await this.handleAgentExecute(req, res);
             } else if (url.pathname.startsWith('/tools/')) {
                 await this.handleToolCall(req, res, url);
             } else if (url.pathname.startsWith('/stream/')) {
@@ -67,6 +70,34 @@ export class HTTPServer {
     private async handleHealth(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
+    }
+
+    private async handleAgentExecute(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+        if (req.method !== 'POST') {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+        }
+
+        const body = await this.readRequestBody(req);
+        
+        try {
+            const params = JSON.parse(body);
+            const result = await this.mcpServer.callTool('agent_execute', params);
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+        } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                taskId: '',
+                success: false,
+                steps: [],
+                summary: 'Agent execution failed',
+                filesModified: [],
+                error: error instanceof Error ? error.message : 'Agent execution handler failed'
+            }));
+        }
     }
 
     private async handleToolCall(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
@@ -141,10 +172,10 @@ export class HTTPServer {
             } else if (streamType === 'chat') {
                 await this.streamChat(params, res);
             } else {
-                res.end('data: {"error": "Unknown stream type"}\n\n');
+                res.end('data: {"error": "Unknown stream type"}\\n\\n');
             }
         } catch (error) {
-            res.end(`data: {"error": "${error instanceof Error ? error.message : 'Unknown error'}"}\n\n`);
+            res.end(`data: {"error": "${error instanceof Error ? error.message : 'Unknown error'}"}\\n\\n`);
         }
     }
 
@@ -162,7 +193,7 @@ export class HTTPServer {
         const chunks = text.split(' ');
         
         for (const chunk of chunks) {
-            res.write(`data: {"token": "${chunk} "}\n\n`);
+            res.write(`data: {"token": "${chunk} "}\\n\\n`);
             await new Promise(resolve => setTimeout(resolve, Number(process.env.STREAM_DELAY_MS || 50)));
         }
         
@@ -236,61 +267,69 @@ export class HTTPServer {
         if (!toolName || typeof toolName !== 'string') {
             return null;
         }
-        
-        // Only allow alphanumeric characters, underscores, and hyphens
-        const sanitized = toolName.replace(/[^a-zA-Z0-9_-]/g, '');
-        
-        // Validate against known tool names
-        const validTools = [
-            'code_completion', 'code_generation', 'code_explanation', 'auto_error_fix',
-            'diagnose_code', 'quick_fix', 'batch_error_fix', 'error_pattern_analysis',
-            'validate_fix', 'code_analysis', 'context_analysis', 'refactoring_suggestions',
-            'chat_assistant', 'explain_code', 'refactor_code', 'generate_tests',
-            'generate_docs', 'security_scan', 'optimize_performance', 'translate_code',
-            'suggest_imports', 'code_review', 'inline_suggestion', 'multi_file_suggestion',
-            'slash_command', 'lsp_integration', 'suggestion_filter', 'multi_model',
-            'keyboard_shortcut', 'telemetry', 'enterprise_tools', 'copilot_labs',
-            'streaming_suggestion', 'context_window', 'ghost_text', 'persistent_cache',
-            'workspace_analysis'
-        ];
-        
-        return validTools.includes(sanitized) ? sanitized : null;
+        // Allow only alphanumeric characters and underscores
+        const sanitized = toolName.replace(/[^a-zA-Z0-9_]/g, '');
+        return sanitized.length > 0 ? sanitized : null;
     }
 
     private sanitizeStreamType(streamType: string): string | null {
         if (!streamType || typeof streamType !== 'string') {
             return null;
         }
-        
-        const sanitized = streamType.replace(/[^a-zA-Z0-9_-]/g, '');
         const validTypes = ['completion', 'chat'];
-        
-        return validTypes.includes(sanitized) ? sanitized : null;
+        return validTypes.includes(streamType) ? streamType : null;
     }
 
-    async start(): Promise<void> {
+    public async start(): Promise<void> {
+        const availablePort = await this.findAvailablePort(this.port);
+        this.port = availablePort;
+        
         return new Promise((resolve, reject) => {
             this.server.listen(this.port, () => {
-                const protocol = this.useHttps ? 'HTTPS' : 'HTTP';
-                this.logger.info(`${protocol} server listening on port ${this.port}`);
+                this.logger.info(`${this.useHttps ? 'HTTPS' : 'HTTP'} server running on port ${this.port}`);
+                process.env.MCP_SERVER_PORT = this.port.toString();
+                process.env.DEFAULT_HTTP_PORT = this.port.toString();
                 resolve();
             });
             
-            this.server.on('error', reject);
+            this.server.on('error', (error: any) => {
+                if (error.code === 'EADDRINUSE') {
+                    this.logger.error(`Port ${this.port} is already in use`);
+                    reject(new Error(`Port ${this.port} is already in use`));
+                } else {
+                    this.logger.error('Server error:', error);
+                    reject(error);
+                }
+            });
         });
     }
 
-    async stop(): Promise<void> {
-        return new Promise((resolve, reject) => {
-            this.server.close((error) => {
-                if (error) {
-                    this.logger.error('Error stopping HTTP server:', error);
-                    reject(error);
-                } else {
-                    this.logger.info('HTTP server stopped');
-                    resolve();
-                }
+    public async stop(): Promise<void> {
+        return new Promise((resolve) => {
+            this.server.close(() => {
+                this.logger.info('Server stopped');
+                resolve();
             });
+        });
+    }
+
+    private async findAvailablePort(startPort: number): Promise<number> {
+        for (let port = startPort; port < startPort + 100; port++) {
+            if (await this.isPortAvailable(port)) {
+                return port;
+            }
+        }
+        throw new Error('No available ports found');
+    }
+
+    private isPortAvailable(port: number): Promise<boolean> {
+        return new Promise(async (resolve) => {
+            const net = await import('net');
+            const server = net.createServer();
+            server.listen(port, () => {
+                server.close(() => resolve(true));
+            });
+            server.on('error', () => resolve(false));
         });
     }
 }

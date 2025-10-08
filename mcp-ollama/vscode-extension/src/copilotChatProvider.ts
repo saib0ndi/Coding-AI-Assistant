@@ -33,9 +33,14 @@ export class CopilotChatProvider {
                 language = editor.document.languageId;
             }
 
-            const result = await this.mcpClient.handleSlashCommand('chat', message, language);
+            const result = await this.mcpClient.callTool('chat_assistant', {
+                query: message,
+                context: contextCode,
+                language: language
+            });
             
-            stream.markdown(result || 'No response available');
+            const response = result?.response || result || 'No response available';
+            stream.markdown(response);
             
         } catch (error) {
             stream.markdown(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);

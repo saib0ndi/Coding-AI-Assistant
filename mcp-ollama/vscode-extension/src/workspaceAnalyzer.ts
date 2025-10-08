@@ -11,27 +11,29 @@ export class WorkspaceAnalyzer {
     }
 
     private setupFileWatcher() {
-        try {
-            this.fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.{js,ts,py,java,cpp,c,go,rs}');
-            
-            this.fileWatcher.onDidChange((uri) => {
-                try {
-                    this.analysisCache.delete(uri.fsPath);
-                } catch (error) {
-                    console.error('Error handling file change:', error);
-                }
-            });
-            
-            this.fileWatcher.onDidDelete((uri) => {
-                try {
-                    this.analysisCache.delete(uri.fsPath);
-                } catch (error) {
-                    console.error('Error handling file deletion:', error);
-                }
-            });
-        } catch (error) {
-            console.error('Failed to setup file watcher:', error);
-        }
+        // Disable file watcher to prevent document event loops
+        console.log('File watcher disabled to prevent crashes');
+        // try {
+        //     this.fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.{js,ts,py,java,cpp,c,go,rs}');
+        //     
+        //     this.fileWatcher.onDidChange((uri) => {
+        //         try {
+        //             this.analysisCache.delete(uri.fsPath);
+        //         } catch (error) {
+        //             console.error('Error handling file change:', error);
+        //         }
+        //     });
+        //     
+        //     this.fileWatcher.onDidDelete((uri) => {
+        //         try {
+        //             this.analysisCache.delete(uri.fsPath);
+        //         } catch (error) {
+        //             console.error('Error handling file deletion:', error);
+        //         }
+        //     });
+        // } catch (error) {
+        //     console.error('Failed to setup file watcher:', error);
+        // }
     }
 
     async analyzeWorkspace(): Promise<any> {

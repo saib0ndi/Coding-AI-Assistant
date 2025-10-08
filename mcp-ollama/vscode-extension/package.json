@@ -1,13 +1,70 @@
 {
   "name": "smartcode-aiassist",
-  "displayName": "SmartCode-AIAssist",
-  "description": "AI-powered code assistance using local Ollama models",
-  "version": "2.7.3",
+  "displayName": "SmartCode AI Assistant - Local AI Coding Agent",
+  "description": "Professional AI coding assistant with /dev, /test, /review agent commands. 100% local, private, and free.",
+  "version": "3.1.1",
   "publisher": "saibondi",
+  "author": {
+    "name": "SmartCode Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartcode/ai-assistant"
+  },
+  "homepage": "https://github.com/smartcode/ai-assistant",
+  "bugs": {
+    "url": "https://github.com/smartcode/ai-assistant/issues"
+  },
+  "keywords": [
+    "ai",
+    "assistant",
+    "coding",
+
+    "copilot",
+    "ollama",
+    "local-ai",
+    "code-generation",
+    "testing",
+    "review",
+    "documentation",
+    "mcp",
+    "agent",
+    "workflow",
+    "diff-viewer",
+    "security-scan"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
+  "badges": [
+    {
+      "url": "https://img.shields.io/badge/AI-Coding%20Agent-blue",
+      "href": "https://github.com/smartcode/ai-assistant",
+      "description": "Professional AI Coding Agent"
+    },
+    {
+      "url": "https://img.shields.io/badge/100%25-Local%20%26%20Private-green",
+      "href": "https://github.com/smartcode/ai-assistant",
+      "description": "100% Local & Private"
+    },
+    {
+      "url": "https://img.shields.io/badge/Cost-$0%20Forever-brightgreen",
+      "href": "https://github.com/smartcode/ai-assistant",
+      "description": "Free Forever"
+    }
+  ],
   "categories": [
+    "Machine Learning",
+    "Programming Languages",
+    "Snippets",
+    "Testing",
+    "Linters",
+    "Formatters",
     "Other"
   ],
   "activationEvents": [
@@ -15,10 +72,29 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "smartcode.workflow",
+          "name": "🤖 Agent Workflow",
+          "when": "smartcode.workflowActive"
+        },
+        {
+          "id": "smartcode.issues", 
+          "name": "🔍 Code Issues",
+          "when": "smartcode.hasIssues"
+        },
+        {
+          "id": "smartcode.progress",
+          "name": "📊 Task Progress",
+          "when": "smartcode.taskRunning"
+        }
+      ]
+    },
     "chatParticipants": [
       {
         "id": "smartcode-aiassist",
-        "name": "SmartCode AI Assistant",
+        "name": "smartcode-ai-assistant",
         "description": "AI-powered coding assistant with MCP-Ollama backend",
         "isSticky": true,
         "commands": [
@@ -38,17 +114,49 @@
       }
     ],
     "configuration": {
-      "title": "SmartCode-AIAssist",
+      "title": "SmartCode AI Assistant",
       "properties": {
         "mcp-ollama.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable SmartCode-AIAssist suggestions"
+          "description": "Enable SmartCode AI Assistant with professional agent commands (/dev, /test, /review)"
         },
         "mcp-ollama.host": {
           "type": "string",
           "default": "http://10.10.110.25:11434",
           "description": "Ollama server host"
+        },
+        "mcp-ollama.ollamaHost": {
+          "type": "string",
+          "default": "http://10.10.110.25:11434",
+          "description": "Ollama server host URL"
+        },
+        "mcp-ollama.serverHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "MCP server hostname"
+        },
+        "mcp-ollama.serverPort": {
+          "type": "number",
+          "default": 3077,
+          "description": "MCP server port"
+        },
+        "mcp-ollama.allowedHosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "localhost",
+            "127.0.0.1",
+            "::1"
+          ],
+          "description": "List of allowed server hostnames"
+        },
+        "mcp-ollama.allowSelfSignedCerts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow self-signed certificates for development"
         },
         "mcp-ollama.serverUrl": {
           "type": "string",
@@ -62,8 +170,17 @@
         },
         "mcp-ollama.model": {
           "type": "string",
-          "default": "codellama:7b-instruct",
-          "description": "Ollama model to use"
+          "default": "deepseek-coder-v2:236b",
+          "description": "Default Ollama model for AI assistance (supports 39+ models)",
+          "enum": [
+            "deepseek-coder-v2:236b",
+            "deepseek-r1:70b",
+            "llama3.3:70b",
+            "phi4:latest",
+            "qwen3:32b",
+            "llama3.1:8b",
+            "gemma3:27b"
+          ]
         },
         "mcp-ollama.useHttps": {
           "type": "boolean",
@@ -79,6 +196,26 @@
           "type": "number",
           "default": 3,
           "description": "Maximum number of suggestions"
+        },
+        "mcp-ollama.enableAgentCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable professional agent commands (/dev, /test, /review, /docs)"
+        },
+        "mcp-ollama.showWorkflowProgress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show real-time workflow progress visualization"
+        },
+        "mcp-ollama.enableDiffViewer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable side-by-side code diff viewer with accept/reject"
+        },
+        "mcp-ollama.enableIssuesPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable security and quality issues detection panel"
         }
       }
     },
@@ -170,6 +307,33 @@
       {
         "command": "mcp-ollama.importHistory",
         "title": "Import Chat History"
+      },
+      {
+        "command": "mcp-ollama.toggleAgentMode",
+        "title": "🤖 Toggle Agent Mode"
+      },
+      {
+        "command": "mcp-ollama.executeAgentTask",
+        "title": "🚀 Execute Agent Task"
+      },
+      {
+        "command": "mcp-ollama.startServer",
+        "title": "🔧 Start MCP Server"
+      },
+      {
+        "command": "mcp-ollama.showWorkflowProgress",
+        "title": "📊 Show Workflow Progress",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.showCodeDiff",
+        "title": "🔍 Show Code Changes",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.showIssuesPanel",
+        "title": "🚨 Show Code Issues",
+        "category": "SmartCode"
       }
     ],
     "keybindings": [
@@ -284,16 +448,24 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "npm run compile",
-    "package": "npx vsce package --out smartcode-aiassist-2.7.3.vsix",
+    "package": "npx vsce package --out smartcode-aiassist-3.1.1.vsix --allow-missing-repository",
     "update": "npm update && npm audit fix",
     "clean": "rm -rf out",
-    "install-local": "code --install-extension smartcode-aiassist-2.7.3.vsix --force"
+    "install-local": "code --install-extension smartcode-aiassist-2.9.2.vsix --force"
   },
   "devDependencies": {
-    "@types/node": "^18.x",
-    "@types/vscode": "^1.103.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.13",
+    "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^2.19.0",
-    "typescript": "^4.9.4"
+    "typescript": "^5.3.3"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "@types/node-fetch": "^2.6.11",
+    "node-fetch": "^2.7.0"
+  },
+  "overrides": {
+    "undici": "^5.28.4"
+  }
 }

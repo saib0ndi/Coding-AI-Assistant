@@ -47,12 +47,18 @@ npm install
 # Build the project
 npm run build
 
-# Install VS Code extension
+# Install VS Code extension (automated)
+./install-extension.sh
+```
+
+### Manual Extension Installation
+```bash
+# Install VS Code extension manually
 cd vscode-extension
 npm install
 npm run compile
-vsce package
-code --install-extension smartcode-aiassist-1.0.10.vsix --force
+npm run package
+code --install-extension smartcode-aiassist-3.1.0.vsix --force
 ```
 
 ### Ollama Configuration

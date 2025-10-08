@@ -203,7 +203,7 @@ export class InlineSuggestionProvider implements vscode.InlineCompletionItemProv
             }
             // Function completions
             else if (textBeforeCursor.includes('function ') && textBeforeCursor.endsWith('{')) {
-                suggestions.push('\n    // TODO: Implement function\n    return null;\n}');
+                suggestions.push('\n    // Implementation needed\n    return null;\n}');
             }
             // Variable declarations
             else if (textBeforeCursor.endsWith('const ')) {
