@@ -3,12 +3,16 @@ import { AgentCommandHandler } from './agentCommands';
 import { WorkflowProgressView } from './workflowProgressView';
 import { DiffViewer } from './diffViewer';
 import { IssuesPanel } from './issuesPanel';
+import { ChatHistory } from './chatHistory';
+import { ConversationContext } from './conversationContext';
+import { ContextualChat } from './contextualChat';
 
 // Message interfaces for type safety
 interface WebviewMessage {
     command: string;
     text?: string;
     model?: string;
+    isAgentMode?: boolean;
 }
 
 interface ModelInfo {
@@ -30,8 +34,11 @@ export class ChatUI {
     private workflowProgressView: WorkflowProgressView;
     private diffViewer: DiffViewer;
     private issuesPanel: IssuesPanel;
+    private chatHistory: ChatHistory;
+    private conversationContext: ConversationContext;
+    private contextualChat: ContextualChat;
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(private context: vscode.ExtensionContext, private mcpClient?: any) {
         this.outputChannel = vscode.window.createOutputChannel('SmartCode-AIAssist');
         this.outputChannel.appendLine('ChatUI initialized');
         
@@ -39,6 +46,9 @@ export class ChatUI {
         this.workflowProgressView = new WorkflowProgressView(context);
         this.diffViewer = new DiffViewer(context);
         this.issuesPanel = new IssuesPanel(context);
+        this.chatHistory = new ChatHistory(context);
+        this.conversationContext = new ConversationContext(context);
+        this.contextualChat = new ContextualChat(context, mcpClient);
     }
 
     public show() {
@@ -390,6 +400,64 @@ export class ChatUI {
             border-color: var(--vscode-focusBorder);
         }
         
+        .input-wrapper.agent-active {
+            border-color: #667eea;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        }
+        
+        .agent-toggle {
+            background: var(--vscode-button-secondaryBackground);
+            border: 1px solid var(--vscode-button-border);
+            color: var(--vscode-button-secondaryForeground);
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 60px;
+            justify-content: center;
+        }
+        
+        .agent-toggle:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+        
+        .agent-toggle.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+        }
+        
+        .agent-status-bar {
+            display: none;
+            padding: 8px 12px;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: var(--vscode-foreground);
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .agent-status-bar.active {
+            display: flex;
+        }
+        
+        .agent-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
         .attach-input-btn {
             background: none;
             border: none;
@@ -470,14 +538,21 @@ export class ChatUI {
     <div class="chat-container">
         <div class="messages" id="messages">
             <div class="welcome">
-                <h2>🎯 Ready to Code!</h2>
+                <h2>Ready to Code!</h2>
                 <p>I'm your AI coding assistant powered by MCP-Ollama.</p>
                 <p>Ask me anything about your code, attach files, or get help with development tasks!</p>
             </div>
         </div>
         
         <div class="input-container">
-            <div class="input-wrapper">
+            <div class="agent-status-bar" id="agentStatusBar">
+                <span class="agent-badge">🤖 AGENT</span>
+                <span>Multi-agent system will break down your task into steps and execute them automatically</span>
+            </div>
+            <div class="input-wrapper" id="inputWrapper">
+                <button class="agent-toggle" id="agentToggle" title="Toggle Agent Mode">
+                    <span id="agentIcon">🤖</span>
+                </button>
                 <button class="attach-input-btn" id="attachInputBtn" title="Attach files">📎</button>
                 <textarea class="message-input" id="messageInput" placeholder="Ask me anything about your code..." rows="1"></textarea>
                 <select id="modelSelect" class="model-dropdown-input">
@@ -492,6 +567,7 @@ export class ChatUI {
         const vscode = acquireVsCodeApi();
         
         let selectedModel = 'deepseek-coder-v2:236b';
+        let isAgentMode = false;
         
         // Load available models
         async function loadModels() {
@@ -572,12 +648,42 @@ export class ChatUI {
             messages.innerHTML = '<div class="welcome"><h2>🎯 Ready to Code!</h2><p>I\\'m your AI coding assistant powered by MCP-Ollama.</p><p>Ask me anything about your code, attach files, or get help with development tasks!</p></div>';
         };
         
+        document.getElementById('agentToggle').onclick = () => {
+            isAgentMode = !isAgentMode;
+            const toggle = document.getElementById('agentToggle');
+            const icon = document.getElementById('agentIcon');
+            const statusBar = document.getElementById('agentStatusBar');
+            const inputWrapper = document.getElementById('inputWrapper');
+            const messageInput = document.getElementById('messageInput');
+            
+            if (isAgentMode) {
+                toggle.classList.add('active');
+                icon.textContent = '🤖';
+                statusBar.classList.add('active');
+                inputWrapper.classList.add('agent-active');
+                messageInput.placeholder = 'Agent mode: Describe your coding task (e.g., "Create a REST API", "Fix this bug", "Generate tests")';
+            } else {
+                toggle.classList.remove('active');
+                icon.textContent = '💬';
+                statusBar.classList.remove('active');
+                inputWrapper.classList.remove('agent-active');
+                messageInput.placeholder = 'Ask me anything about your code...';
+            }
+            
+            messageInput.focus();
+        };
+        
         document.getElementById('sendBtn').onclick = () => {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             if (message) {
                 addMessage(message, true);
-                vscode.postMessage({ command: 'sendMessage', text: message, model: selectedModel });
+                vscode.postMessage({ 
+                    command: 'sendMessage', 
+                    text: message, 
+                    model: selectedModel,
+                    isAgentMode: isAgentMode
+                });
                 input.value = '';
                 input.style.height = 'auto';
             }
@@ -640,7 +746,7 @@ export class ChatUI {
                         break;
                     case 'sendMessage':
                         if (message.text) {
-                            await this.handleSendMessage(message.text, message.model);
+                            await this.handleSendMessage(message.text, message.model, message.isAgentMode);
                         }
                         break;
                     case 'getModels':
@@ -650,6 +756,13 @@ export class ChatUI {
                         if (this.outputChannel) {
                             this.outputChannel.appendLine(`[ChatUI] Model changed to: ${message.model}`);
                         }
+                        break;
+                    case 'clearHistory':
+                        this.chatHistory.clearHistory();
+                        this.conversationContext.clearContext();
+                        break;
+                    case 'showContext':
+                        await this.handleShowContext();
                         break;
                 }
             } catch (error) {
@@ -758,17 +871,17 @@ export class ChatUI {
         return `${Math.round(mb)}MB`;
     }
 
-    private async handleSendMessage(text: string, model?: string): Promise<void> {
+    private async handleSendMessage(text: string, model?: string, isAgentMode?: boolean): Promise<void> {
         if (!text.trim()) return;
+        
+        // Note: contextualChat.sendContextualMessage handles adding to history
         
         this.outputChannel.appendLine(`[ChatUI] Processing: "${text.substring(0, 100)}..."`);
         
-        // Show processing indicator for large requests
-        if (text.length > 1000 || text.includes('analyze') || text.includes('explain')) {
-            this.panel?.webview.postMessage({
-                command: 'response',
-                text: '🔍 **Analyzing large codebase...** This may take 2-5 minutes for comprehensive analysis.'
-            });
+        // Handle agent mode or explicit agent commands
+        if (isAgentMode || this.agentCommandHandler.parseCommand(text)) {
+            await this.handleAgentMode(text, model);
+            return;
         }
         
         const agentCommand = this.agentCommandHandler.parseCommand(text);
@@ -778,24 +891,9 @@ export class ChatUI {
         }
         
         try {
-            const { MCPClient } = await import('./mcpClient');
-            const mcpClient = new MCPClient();
-
-            await mcpClient.connect();
-            const selectedModel = model || 'deepseek-r1:70b'; // Use reasoning model for complex analysis
+            // Use contextual chat for intelligent conversation continuity
+            const response = await this.contextualChat.sendContextualMessage(text);
             
-            let response: string;
-            
-            // Enterprise-grade analysis for large codebases
-            if (this.isLargeCodebaseQuery(text)) {
-                this.outputChannel.appendLine('[ChatUI] Enterprise codebase analysis mode');
-                response = await this.handleLargeCodebaseAnalysis(text, selectedModel, mcpClient);
-            } else if (this.isCodeRelated(text)) {
-                response = await mcpClient.explainCodeWithModel(text, 'general', selectedModel);
-            } else {
-                response = await mcpClient.handleSlashCommandWithModel('/chat', text, 'general', selectedModel);
-            }
-
             this.panel?.webview.postMessage({
                 command: 'response',
                 text: response || 'Analysis completed. Please check the detailed results.'
@@ -803,9 +901,11 @@ export class ChatUI {
             
         } catch (error) {
             this.outputChannel.appendLine(`[ChatUI] Error: ${error}`);
+            const fallbackResponse = this.getFallbackResponse(text);
+            this.chatHistory.addMessage('assistant', fallbackResponse);
             this.panel?.webview.postMessage({
                 command: 'response',
-                text: this.getFallbackResponse(text)
+                text: fallbackResponse
             });
         }
     }
@@ -920,6 +1020,82 @@ export class ChatUI {
         }
     }
 
+    private async handleAgentMode(text: string, model?: string): Promise<void> {
+        try {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `🤖 **Agent Mode Activated**\n\nTask: "${text}"\n\n⚡ Starting multi-agent workflow...`
+            });
+
+            // Check if MCP server is running
+            const serverRunning = await this.checkMCPServer();
+            if (!serverRunning) {
+                this.panel?.webview.postMessage({
+                    command: 'response',
+                    text: `❌ **MCP Server Required**\n\nAgent mode requires the MCP server to be running.\n\n**Start the server:**\n\`\`\`bash\ncd mcp-ollama\nnpm start\n\`\`\``
+                });
+                return;
+            }
+
+            // Show agent workflow progress
+            const workflowSteps = [
+                '🧠 Planning workflow...',
+                '🔍 Analyzing requirements...',
+                '⚙️ Selecting appropriate agents...',
+                '🚀 Executing multi-agent workflow...'
+            ];
+
+            for (const step of workflowSteps) {
+                this.panel?.webview.postMessage({
+                    command: 'response',
+                    text: step
+                });
+                await new Promise(resolve => setTimeout(resolve, 800));
+            }
+
+            // Execute agent workflow
+            const { MCPClient } = await import('./mcpClient');
+            const mcpClient = new MCPClient();
+            await mcpClient.connect();
+
+            // Call agent execution with timeout handling
+            const agentResult = await Promise.race([
+                mcpClient.callTool('agent_execute', {
+                    description: text,
+                    type: 'analyze',
+                    context: {
+                        workspacePath: vscode.workspace.rootPath || '/tmp',
+                        language: 'typescript'
+                    },
+                    priority: 'medium'
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Agent task timeout - this is normal for complex tasks')), 30000)
+                )
+            ]);
+
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `✅ **Agent Workflow Complete**\n\n${agentResult.summary || 'Multi-agent task completed successfully!'}\n\n**Files Modified:** ${agentResult.filesModified?.length || 0}\n**Steps Executed:** ${agentResult.steps?.length || 0}`
+            });
+
+        } catch (error) {
+            this.outputChannel.appendLine(`[ChatUI] Agent mode error: ${error}`);
+            
+            if (error instanceof Error && error.message?.includes('timeout')) {
+                this.panel?.webview.postMessage({
+                    command: 'response',
+                    text: `⏱️ **Agent Task In Progress**\n\nYour task "${text}" is being processed by the agent system.\n\nℹ️ **This is normal** - complex agent tasks can take 30-60 seconds.\n\n🔄 **The agent is working on:**\n• Breaking down your task into steps\n• Planning the implementation\n• Executing the workflow\n\n💡 **For faster results, try simpler tasks like:**\n• "Explain this code"\n• "Fix syntax errors"\n• "Generate a simple function"`
+                });
+            } else {
+                this.panel?.webview.postMessage({
+                    command: 'response',
+                    text: `❌ **Agent Mode Error**\n\n${error instanceof Error ? error.message : String(error)}\n\n💡 **Try:**\n• Ensure MCP server is running\n• Use simpler task description\n• Check Ollama is available`
+                });
+            }
+        }
+    }
+
     private async checkMCPServer(): Promise<boolean> {
         try {
             const { MCPClient } = await import('./mcpClient');
@@ -934,18 +1110,39 @@ export class ChatUI {
         }
     }
 
+    private async handleShowContext(): Promise<void> {
+        try {
+            const summary = this.contextualChat.getConversationSummary();
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `## 📋 Conversation Context Summary\n\n${summary}`
+            });
+        } catch (error) {
+            this.panel?.webview.postMessage({
+                command: 'response',
+                text: `❌ Failed to get conversation context: ${error}`
+            });
+        }
+    }
+
     private getFallbackResponse(text: string): string {
         const lowerText = text.toLowerCase();
         
+        // Check for context-related queries
+        if (lowerText.includes('context') || lowerText.includes('conversation') || lowerText.includes('summary') || lowerText.includes('total context')) {
+            const summary = this.contextualChat.getConversationSummary();
+            return `## 📋 Conversation Context Summary\n\n${summary}\n\n💡 **Context Features:**\n• Maintains conversation history across interactions\n• Uses relevance scoring to find related messages\n• Balances keyword matching with recency\n• Adapts technical depth based on conversation level`;
+        }
+        
         if (lowerText.includes('hi') || lowerText.includes('hello')) {
-            return `👋 Hello! I'm your professional AI coding assistant. I can help you with:\n\n**🤖 Agent Commands:**\n• \`/dev implement user authentication\` - Development tasks\n• \`/test generate unit tests\` - Testing tasks\n• \`/review check security issues\` - Code review\n• \`/docs create API documentation\` - Documentation\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n\nWhat would you like to work on today?`;
+            return `👋 Hello! I'm your professional AI coding assistant with **conversational context**. I can help you with:\n\n**🤖 Agent Commands:**\n• \`/dev implement user authentication\` - Development tasks\n• \`/test generate unit tests\` - Testing tasks\n• \`/review check security issues\` - Code review\n• \`/docs create API documentation\` - Documentation\n\n**🧠 Context Features:**\n• I remember our conversation history\n• I can reference previous discussions\n• Ask me "show context" to see conversation summary\n\nWhat would you like to work on today?`;
         }
         
         if (lowerText.includes('help')) {
-            return `🚀 **Available Commands:**\n\n**🤖 Professional Agent Commands:**\n• \`/dev [task]\` - Development tasks (implement, fix, refactor)\n• \`/test [task]\` - Generate and run tests\n• \`/review [task]\` - Code review and analysis\n• \`/docs [task]\` - Generate documentation\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n• ⚡ Optimize Performance\n• 🔒 Security Scan\n• 👀 Code Review\n• 🔄 Translate Language\n\n**Examples:**\n• \`/dev implement user login with JWT\`\n• \`/test add unit tests for UserService\`\n• \`/review check for security vulnerabilities\`\n• \`/docs create API documentation\`**`;
+            return `🚀 **Available Commands:**\n\n**🤖 Professional Agent Commands:**\n• \`/dev [task]\` - Development tasks (implement, fix, refactor)\n• \`/test [task]\` - Generate and run tests\n• \`/review [task]\` - Code review and analysis\n• \`/docs [task]\` - Generate documentation\n\n**🧠 Conversational Context:**\n• "show context" - Display conversation summary\n• "what did we discuss?" - Review previous topics\n• I automatically reference relevant past discussions\n\n**Right-click on selected code for:**\n• 🔍 Explain Code\n• 🔧 Fix Code Issues\n• 🧪 Generate Tests\n• 📝 Generate Documentation\n\n**Examples:**\n• \`/dev implement user login with JWT\`\n• \`/test add unit tests for UserService\`\n• \`/review check for security vulnerabilities\`\n• "show context" to see conversation history`;
         }
         
-        return `I understand you're asking about: "${text}". \n\n**💡 Try using agent commands:**\n• \`/dev [your request]\` for development tasks\n• \`/test [your request]\` for testing\n• \`/review [your request]\` for code review\n• \`/docs [your request]\` for documentation\n\nThe MCP server isn't running right now, but I'm ready to help when it's available! \n\nTry starting the MCP server with \`npm start\` in the mcp-ollama directory.`;
+        return `I understand you're asking about: "${text}". \n\n**💡 Try using agent commands:**\n• \`/dev [your request]\` for development tasks\n• \`/test [your request]\` for testing\n• \`/review [your request]\` for code review\n• \`/docs [your request]\` for documentation\n\n**🧠 Context available:** Ask "show context" to see our conversation history.\n\nThe MCP server isn't running right now, but I'm ready to help when it's available! \n\nTry starting the MCP server with \`npm start\` in the mcp-ollama directory.`;
     }
 
     public dispose(): void {

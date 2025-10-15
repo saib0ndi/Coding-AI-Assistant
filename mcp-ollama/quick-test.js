@@ -1,50 +1,30 @@
-#!/usr/bin/env node
+import fetch from 'node-fetch';
 
-// Quick test of slash command
-import http from 'http';
-
-const testSlashCommand = () => {
-  const data = JSON.stringify({
-    command: '/explain',
-    code: 'console.log("hello");',
-    language: 'javascript'
+async function test(users) {
+  console.log(`Testing ${users} users...`);
+  const promises = Array.from({length: users}, async (_, i) => {
+    try {
+      const res = await fetch('http://10.10.110.25:11434/api/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          model: 'deepseek-coder-v2:236b',
+          prompt: 'Hello world',
+          stream: false,
+          options: {num_predict: 20}
+        }),
+        timeout: 30000
+      });
+      return res.ok ? 'success' : `failed-${res.status}`;
+    } catch(e) { return `error-${e.message}`; }
   });
-
-  const options = {
-    hostname: 'localhost',
-    port: 3077,
-    path: '/tools/slash_command',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(data)
-    },
-    timeout: 60000
-  };
-
-  console.log('🧪 Testing slash command...');
   
-  const req = http.request(options, (res) => {
-    console.log(`📡 Server responded: ${res.statusCode}`);
-    let responseData = '';
-    res.on('data', chunk => responseData += chunk);
-    res.on('end', () => {
-      console.log('📄 Response:', responseData.substring(0, 500));
-    });
-  });
+  const results = await Promise.allSettled(promises);
+  const successful = results.filter(r => r.status === 'fulfilled' && r.value === 'success').length;
+  console.log(`${successful}/${users} successful (${(successful/users*100).toFixed(1)}%)`);
+}
 
-  req.on('error', (err) => {
-    console.log(`❌ Request failed: ${err.message}`);
-  });
-
-  req.on('timeout', () => {
-    console.log('⏰ Request timed out');
-    req.destroy();
-  });
-
-  req.setTimeout(60000);
-  req.write(data);
-  req.end();
-};
-
-testSlashCommand();
+for (const count of [26, 27, 28, 29]) {
+  await test(count);
+  await new Promise(r => setTimeout(r, 2000));
+}

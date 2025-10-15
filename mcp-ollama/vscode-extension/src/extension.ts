@@ -68,7 +68,7 @@ export async function activate(context: vscode.ExtensionContext) {
         chatProvider = new CopilotChatProvider(mcpClient);
         streamingClient = new StreamingClient(mcpClient);
         workspaceAnalyzer = new WorkspaceAnalyzer(mcpClient);
-        chatUI = new ChatUI(context);
+        chatUI = new ChatUI(context, mcpClient);
         
         // Disable automatic document event handlers to prevent infinite loops
         outputChannel.appendLine('Document event handlers disabled to prevent crashes');

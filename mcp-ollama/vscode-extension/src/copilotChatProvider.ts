@@ -19,6 +19,12 @@ export class CopilotChatProvider {
             return;
         }
 
+        // Check for GitHub requests
+        if (this.isGitHubRequest(message)) {
+            await this.handleGitHubRequest(message, stream, token);
+            return;
+        }
+
         // Regular chat interaction
         try {
             stream.progress('Thinking...');
@@ -182,5 +188,99 @@ export class CopilotChatProvider {
             const doc = await vscode.workspace.openTextDocument({ content, language });
             await vscode.window.showTextDocument(doc);
         };
+    }
+
+    private isGitHubRequest(message: string): boolean {
+        const lowerMessage = message.toLowerCase();
+        return (
+            lowerMessage.includes('github.com') ||
+            lowerMessage.includes('get readme') ||
+            lowerMessage.includes('fetch file') ||
+            lowerMessage.includes('show file') ||
+            lowerMessage.includes('get package.json') ||
+            lowerMessage.includes('get src/') ||
+            lowerMessage.includes('get index.') ||
+            lowerMessage.includes('get main.') ||
+            lowerMessage.includes('get app.') ||
+            (lowerMessage.includes('get') && lowerMessage.includes('file')) ||
+            (lowerMessage.includes('show') && lowerMessage.includes('me')) ||
+            lowerMessage.includes('repository') ||
+            lowerMessage.includes('repo info') ||
+            /get\s+[\w\-\/\.]+\.[a-z]+/i.test(message)
+        );
+    }
+
+    private async handleGitHubRequest(
+        message: string,
+        stream: vscode.ChatResponseStream,
+        token: vscode.CancellationToken
+    ): Promise<void> {
+        try {
+            stream.progress('Fetching from GitHub...');
+            
+            const urlMatch = message.match(/https:\/\/github\.com\/[^\s?]+/);
+            if (!urlMatch) {
+                stream.markdown('❌ Please provide a valid GitHub repository URL');
+                return;
+            }
+            
+            const repoUrl = urlMatch[0].replace(/\?.*$/, '');
+            
+            // Use smart query to handle all GitHub requests with automatic branch detection
+            const result = await this.mcpClient.callTool('github_smart_query', {
+                repoUrl,
+                query: message,
+                context: 'VS Code extension request'
+            });
+            
+            if (result.success) {
+                // Handle different types of smart query results
+                if (result.type === 'file_content' && result.file) {
+                    const lang = this.getLanguageFromExtension(result.file.path);
+                    stream.markdown(`# ${result.file.name} (${result.file.branch})\n\n\`\`\`${lang}\n${result.file.content}\n\`\`\``);
+                } else if (result.type === 'readme_search' && result.file) {
+                    stream.markdown(`# README (${result.file.branch})\n\n${result.file.content}`);
+                } else if (result.repository) {
+                    const repo = result.repository;
+                    stream.markdown(`# ${repo.name}\n\n**Description:** ${repo.description || 'No description'}\n**Language:** ${repo.language}\n**Stars:** ${repo.stars}\n**Default Branch:** ${repo.defaultBranch}\n**Owner:** ${repo.owner.login}`);
+                } else {
+                    stream.markdown(`# GitHub Query Result\n\n${JSON.stringify(result, null, 2)}`);
+                }
+            } else {
+                stream.markdown(`❌ GitHub request failed: ${result.error}`);
+            }
+            
+        } catch (error) {
+            stream.markdown(`❌ GitHub request failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    private getLanguageFromExtension(filePath: string): string {
+        const ext = filePath.split('.').pop()?.toLowerCase();
+        const langMap: Record<string, string> = {
+            'js': 'javascript',
+            'ts': 'typescript',
+            'py': 'python',
+            'java': 'java',
+            'cpp': 'cpp',
+            'c': 'c',
+            'cs': 'csharp',
+            'php': 'php',
+            'rb': 'ruby',
+            'go': 'go',
+            'rs': 'rust',
+            'swift': 'swift',
+            'kt': 'kotlin',
+            'scala': 'scala',
+            'sh': 'bash',
+            'yml': 'yaml',
+            'yaml': 'yaml',
+            'json': 'json',
+            'xml': 'xml',
+            'html': 'html',
+            'css': 'css',
+            'md': 'markdown'
+        };
+        return langMap[ext || ''] || 'text';
     }
 }

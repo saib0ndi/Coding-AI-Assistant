@@ -22,6 +22,7 @@ import { QualityFilter } from '../quality/QualityFilter.js';
 import { VectorStore } from '../semantic/VectorStore.js';
 import { SecurityScanner } from '../security/SecurityScanner.js';
 import { EnhancedContextManager } from '../context/EnhancedContextManager.js';
+import { GitHubService } from '../services/GitHubService.js';
 import {
   MCPTool,
   MCPResource,
@@ -64,6 +65,7 @@ export class MCPServer {
   private readonly vectorStore: VectorStore;
   private readonly securityScanner: SecurityScanner;
   private readonly enhancedContext: EnhancedContextManager;
+  private readonly gitHubService: GitHubService;
   private readonly tools = new Map<string, MCPTool>();
   private readonly resources = new Map<string, MCPResource>();
   private readonly config: OllamaConfig;
@@ -107,6 +109,7 @@ export class MCPServer {
       this.vectorStore = new VectorStore();
       this.securityScanner = new SecurityScanner();
       this.enhancedContext = new EnhancedContextManager();
+      this.gitHubService = GitHubService.getInstance();
       this.persistentCache = new PersistentCache();
       
       this.initializeServer();
@@ -1303,6 +1306,41 @@ export class MCPServer {
           message: response || 'chore: update code',
           timestamp: new Date().toISOString()
         };
+      }),
+      this.createTool('github_repo_info', 'Get GitHub repository information', {
+        repoUrl: { type: 'string', description: 'GitHub repository URL' }
+      }, ['repoUrl'], async (params: any) => {
+        console.log('[MCPServer] Fetching GitHub repo info:', params.repoUrl);
+        return await this.gitHubService.getRepositoryInfo(params.repoUrl);
+      }),
+      this.createTool('github_file_content', 'Get specific file content from repository', {
+        repoUrl: { type: 'string' }, filePath: { type: 'string' }, branch: { type: 'string' }
+      }, ['repoUrl', 'filePath'], async (params: any) => {
+        return await this.gitHubService.getFileContent(params.repoUrl, params.filePath, params.branch);
+      }),
+      this.createTool('github_directory_listing', 'Get directory contents from repository', {
+        repoUrl: { type: 'string' }, dirPath: { type: 'string' }, branch: { type: 'string' }
+      }, ['repoUrl'], async (params: any) => {
+        return await this.gitHubService.getDirectoryContents(params.repoUrl, params.dirPath, params.branch);
+      }),
+      this.createTool('github_search_code', 'Search for code in repository', {
+        repoUrl: { type: 'string' }, query: { type: 'string' }, language: { type: 'string' }
+      }, ['repoUrl', 'query'], async (params: any) => {
+        return await this.gitHubService.searchCode(params.repoUrl, params.query, params.language);
+      }),
+      this.createTool('github_complete_analysis', 'Get complete repository analysis including contributors', {
+        repoUrl: { type: 'string' }
+      }, ['repoUrl'], async (params: any) => {
+        console.log('[MCPServer] Getting complete GitHub analysis for:', params.repoUrl);
+        return await this.gitHubService.getCompleteAnalysis(params.repoUrl);
+      }),
+      this.createTool('github_smart_query', 'Intelligent GitHub query that understands user requests for specific files or content', {
+        repoUrl: { type: 'string' },
+        query: { type: 'string', description: 'User query like "get index.ts file" or "show me the main component"' },
+        context: { type: 'string', description: 'Additional context about what the user is looking for' }
+      }, ['repoUrl', 'query'], async (params: any) => {
+        console.log('[MCPServer] Processing smart GitHub query via GitHubService');
+        return await this.handleGitHubSmartQuery(params.repoUrl, params.query, params.context);
       })
     ];
   }
@@ -3912,6 +3950,25 @@ Brief analysis:`;
       timestamp: new Date().toISOString()
     };
   }
+
+  async testGitHubRepoAccess(repoUrl: string): Promise<any> {
+    return await this.gitHubService.getRepositoryInfo(repoUrl);
+  }
+
+  private async handleGitHubSmartQuery(repoUrl: string, query: string, context?: string): Promise<any> {
+    try {
+      return await this.gitHubService.handleSmartQuery(repoUrl, query, context);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Smart query failed',
+        repoUrl,
+        query
+      };
+    }
+  }
+
+
 
   // UI COMPONENT CREATORS
   private createUIComponent(type: string, props: any): any {

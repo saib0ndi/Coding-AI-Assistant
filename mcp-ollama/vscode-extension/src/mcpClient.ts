@@ -503,4 +503,37 @@ export class MCPClient {
             return [];
         }
     }
+
+    async getGitHubRepoInfo(repoUrl: string): Promise<any> {
+        try {
+            await this.ensureConnected();
+            const result = await this.callTool('github_repo_info', { repoUrl });
+            return result;
+        } catch (error) {
+            console.error('Error getting GitHub repo info:', error);
+            return { success: false, error: 'Failed to fetch repository information' };
+        }
+    }
+
+    async getGitHubFileContent(repoUrl: string, filePath: string, branch = 'main'): Promise<any> {
+        try {
+            await this.ensureConnected();
+            const result = await this.callTool('github_file_content', { repoUrl, filePath, branch });
+            return result;
+        } catch (error) {
+            console.error('Error getting GitHub file content:', error);
+            return { success: false, error: 'Failed to fetch file content' };
+        }
+    }
+
+    async getGitHubDirectoryContents(repoUrl: string, dirPath: string = '', branch?: string): Promise<any> {
+        try {
+            await this.ensureConnected();
+            const result = await this.callTool('github_directory_listing', { repoUrl, dirPath, branch });
+            return result;
+        } catch (error) {
+            console.error('Error getting GitHub directory contents:', error);
+            return { success: false, error: 'Failed to fetch directory contents' };
+        }
+    }
 }

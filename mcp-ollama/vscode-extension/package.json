@@ -2,7 +2,7 @@
   "name": "smartcode-aiassist",
   "displayName": "SmartCode AI Assistant - Local AI Coding Agent",
   "description": "Professional AI coding assistant with /dev, /test, /review agent commands. 100% local, private, and free.",
-  "version": "3.1.1",
+  "version": "3.3.1",
   "publisher": "saibondi",
   "author": {
     "name": "SmartCode Team"
@@ -20,7 +20,6 @@
     "ai",
     "assistant",
     "coding",
-
     "copilot",
     "ollama",
     "local-ai",
@@ -80,7 +79,7 @@
           "when": "smartcode.workflowActive"
         },
         {
-          "id": "smartcode.issues", 
+          "id": "smartcode.issues",
           "name": "🔍 Code Issues",
           "when": "smartcode.hasIssues"
         },
@@ -457,7 +456,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.13",
     "@types/vscode": "^1.90.0",
-    "@vscode/vsce": "^2.19.0",
+    "@vscode/vsce": "^2.32.0",
     "typescript": "^5.3.3"
   },
   "dependencies": {
