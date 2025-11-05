@@ -1,0 +1,312 @@
+{
+  "summary": {
+    "total": 50,
+    "passed": 40,
+    "failed": 10,
+    "skipped": 0,
+    "duration": 121192,
+    "timestamp": "2025-11-03T08:43:26.749Z"
+  },
+  "details": [
+    {
+      "name": "Package Configuration",
+      "passed": true,
+      "details": "File exists (440 bytes)",
+      "timestamp": "2025-11-03T08:41:25.561Z"
+    },
+    {
+      "name": "TypeScript Config",
+      "passed": true,
+      "details": "File exists (758 bytes)",
+      "timestamp": "2025-11-03T08:41:25.562Z"
+    },
+    {
+      "name": "Environment Config",
+      "passed": true,
+      "details": "File exists (282 bytes)",
+      "timestamp": "2025-11-03T08:41:25.562Z"
+    },
+    {
+      "name": "Source Directory",
+      "passed": true,
+      "details": "Directory exists (16 files)",
+      "timestamp": "2025-11-03T08:41:25.562Z"
+    },
+    {
+      "name": "Types Directory",
+      "passed": true,
+      "details": "Directory exists (2 files)",
+      "timestamp": "2025-11-03T08:41:25.563Z"
+    },
+    {
+      "name": "TypeScript Compilation",
+      "passed": true,
+      "details": "No compilation errors",
+      "timestamp": "2025-11-03T08:41:28.340Z"
+    },
+    {
+      "name": "Agent: AgentManager.ts",
+      "passed": true,
+      "details": "File exists (24440 bytes)",
+      "timestamp": "2025-11-03T08:41:28.343Z"
+    },
+    {
+      "name": "Agent: AutonomousAgent.ts",
+      "passed": true,
+      "details": "File exists (15994 bytes)",
+      "timestamp": "2025-11-03T08:41:28.344Z"
+    },
+    {
+      "name": "Agent: CodeAgent.ts",
+      "passed": true,
+      "details": "File exists (16951 bytes)",
+      "timestamp": "2025-11-03T08:41:28.344Z"
+    },
+    {
+      "name": "Agent: EnhancedAgentManager.ts",
+      "passed": true,
+      "details": "File exists (4017 bytes)",
+      "timestamp": "2025-11-03T08:41:28.344Z"
+    },
+    {
+      "name": "Agent: ProjectAgent.ts",
+      "passed": true,
+      "details": "File exists (14420 bytes)",
+      "timestamp": "2025-11-03T08:41:28.345Z"
+    },
+    {
+      "name": "Agent Directory Creation",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:31.431Z"
+    },
+    {
+      "name": "Agent Execution",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:31.831Z"
+    },
+    {
+      "name": "Autonomous Agent",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:31.876Z"
+    },
+    {
+      "name": "Provider/Service: OllamaProvider.ts",
+      "passed": true,
+      "details": "File exists (62705 bytes)",
+      "timestamp": "2025-11-03T08:41:31.877Z"
+    },
+    {
+      "name": "Provider/Service: GitHubService.ts",
+      "passed": true,
+      "details": "File exists (22774 bytes)",
+      "timestamp": "2025-11-03T08:41:31.878Z"
+    },
+    {
+      "name": "Provider/Service: GitHubRepositoryAnalyzer.ts",
+      "passed": true,
+      "details": "File exists (32080 bytes)",
+      "timestamp": "2025-11-03T08:41:31.878Z"
+    },
+    {
+      "name": "Provider/Service: VectorStore.ts",
+      "passed": true,
+      "details": "File exists (7651 bytes)",
+      "timestamp": "2025-11-03T08:41:31.879Z"
+    },
+    {
+      "name": "Provider/Service: SecurityScanner.ts",
+      "passed": true,
+      "details": "File exists (4580 bytes)",
+      "timestamp": "2025-11-03T08:41:31.881Z"
+    },
+    {
+      "name": "Ollama Provider",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:32.327Z"
+    },
+    {
+      "name": "GitHub Service",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:32.864Z"
+    },
+    {
+      "name": "Repository Analyzer",
+      "passed": false,
+      "details": "Exit code: 1, Error: node:internal/errors:496\n    ErrorCaptureStackTrace(err);\n    ^\n\nError [ERR_MODULE_NOT_FOUND]: Canno",
+      "timestamp": "2025-11-03T08:41:32.917Z"
+    },
+    {
+      "name": "Server: MCPServer.ts",
+      "passed": true,
+      "details": "File exists (170012 bytes)",
+      "timestamp": "2025-11-03T08:41:32.920Z"
+    },
+    {
+      "name": "Server: HTTPServer.ts",
+      "passed": true,
+      "details": "File exists (15813 bytes)",
+      "timestamp": "2025-11-03T08:41:32.921Z"
+    },
+    {
+      "name": "Server: RequestRouter.ts",
+      "passed": true,
+      "details": "File exists (5550 bytes)",
+      "timestamp": "2025-11-03T08:41:32.921Z"
+    },
+    {
+      "name": "Server Basic",
+      "passed": false,
+      "details": "Timeout",
+      "timestamp": "2025-11-03T08:41:47.930Z"
+    },
+    {
+      "name": "Server Basic",
+      "passed": false,
+      "details": "Exit code: null, Error: ",
+      "timestamp": "2025-11-03T08:41:47.935Z"
+    },
+    {
+      "name": "Fast Server",
+      "passed": false,
+      "details": "Exit code: 1, Error: node:internal/errors:496\n    ErrorCaptureStackTrace(err);\n    ^\n\nError [ERR_MODULE_NOT_FOUND]: Canno",
+      "timestamp": "2025-11-03T08:41:47.984Z"
+    },
+    {
+      "name": "Utility: CacheManager.ts",
+      "passed": true,
+      "details": "File exists (1185 bytes)",
+      "timestamp": "2025-11-03T08:41:47.986Z"
+    },
+    {
+      "name": "Utility: ContextManager.ts",
+      "passed": true,
+      "details": "File exists (12959 bytes)",
+      "timestamp": "2025-11-03T08:41:47.986Z"
+    },
+    {
+      "name": "Utility: ErrorAnalyzer.ts",
+      "passed": true,
+      "details": "File exists (21273 bytes)",
+      "timestamp": "2025-11-03T08:41:47.987Z"
+    },
+    {
+      "name": "Utility: Logger.ts",
+      "passed": true,
+      "details": "File exists (4472 bytes)",
+      "timestamp": "2025-11-03T08:41:47.987Z"
+    },
+    {
+      "name": "Utility: FileSystemTool.ts",
+      "passed": true,
+      "details": "File exists (2933 bytes)",
+      "timestamp": "2025-11-03T08:41:47.988Z"
+    },
+    {
+      "name": "Utility: BuildTool.ts",
+      "passed": true,
+      "details": "File exists (3651 bytes)",
+      "timestamp": "2025-11-03T08:41:47.989Z"
+    },
+    {
+      "name": "File System Tool",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:48.099Z"
+    },
+    {
+      "name": "Tools Simple",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:48.159Z"
+    },
+    {
+      "name": "Extension: extension.ts",
+      "passed": true,
+      "details": "File exists (50529 bytes)",
+      "timestamp": "2025-11-03T08:41:48.160Z"
+    },
+    {
+      "name": "Extension: mcpClient.ts",
+      "passed": true,
+      "details": "File exists (23067 bytes)",
+      "timestamp": "2025-11-03T08:41:48.160Z"
+    },
+    {
+      "name": "Extension: chatUI.ts",
+      "passed": true,
+      "details": "File exists (44650 bytes)",
+      "timestamp": "2025-11-03T08:41:48.161Z"
+    },
+    {
+      "name": "Extension: inlineCompletionProvider.ts",
+      "passed": true,
+      "details": "File exists (5108 bytes)",
+      "timestamp": "2025-11-03T08:41:48.161Z"
+    },
+    {
+      "name": "Extension Package",
+      "passed": true,
+      "details": "File exists (13408 bytes)",
+      "timestamp": "2025-11-03T08:41:48.161Z"
+    },
+    {
+      "name": "Integration: test-all-functionality.js",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:54.746Z"
+    },
+    {
+      "name": "Integration: test-complete-analysis.js",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:56.244Z"
+    },
+    {
+      "name": "Integration: test-integrated-nlp-semantic.mjs",
+      "passed": true,
+      "details": "Script executed successfully",
+      "timestamp": "2025-11-03T08:41:56.299Z"
+    },
+    {
+      "name": "Integration: test-semantic-integration.cjs",
+      "passed": false,
+      "details": "Exit code: 1, Error: /home/sb57213v/Coding-AI-Assistant/mcp-ollama/node_modules/compromise/builds/three/compromise-three.",
+      "timestamp": "2025-11-03T08:41:56.659Z"
+    },
+    {
+      "name": "Performance: test-capacity-gradual.js",
+      "passed": false,
+      "details": "Timeout",
+      "timestamp": "2025-11-03T08:42:26.685Z"
+    },
+    {
+      "name": "Performance: test-capacity-gradual.js",
+      "passed": false,
+      "details": "Exit code: null, Error: ",
+      "timestamp": "2025-11-03T08:42:26.690Z"
+    },
+    {
+      "name": "Performance: test-high-capacity.js",
+      "passed": false,
+      "details": "Timeout",
+      "timestamp": "2025-11-03T08:42:56.712Z"
+    },
+    {
+      "name": "Performance: test-high-capacity.js",
+      "passed": false,
+      "details": "Exit code: null, Error: ",
+      "timestamp": "2025-11-03T08:42:56.717Z"
+    },
+    {
+      "name": "Performance: quick-test.js",
+      "passed": false,
+      "details": "Timeout",
+      "timestamp": "2025-11-03T08:43:26.747Z"
+    }
+  ]
+}

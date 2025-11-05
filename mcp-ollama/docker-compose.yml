@@ -1,0 +1,23 @@
+services:
+  mcp-ollama:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    volumes:
+      - ./logs:/app/logs
+      - ./certs:/app/certs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    driver: bridge

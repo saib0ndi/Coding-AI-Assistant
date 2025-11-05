@@ -2,7 +2,7 @@
   "name": "smartcode-aiassist",
   "displayName": "SmartCode AI Assistant - Local AI Coding Agent",
   "description": "Professional AI coding assistant with /dev, /test, /review agent commands. 100% local, private, and free.",
-  "version": "3.3.1",
+  "version": "3.10.2",
   "publisher": "saibondi",
   "author": {
     "name": "SmartCode Team"
@@ -159,13 +159,13 @@
         },
         "mcp-ollama.serverUrl": {
           "type": "string",
-          "default": "http://localhost:3077",
-          "description": "MCP server URL"
+          "default": "http://10.10.110.22:15267",
+          "description": "MCP server URL (Docker hosted)"
         },
         "mcp-ollama.serverPath": {
           "type": "string",
-          "default": "http://localhost:3077",
-          "description": "MCP server path"
+          "default": "http://10.10.110.22:15267",
+          "description": "MCP server path (Docker hosted)"
         },
         "mcp-ollama.model": {
           "type": "string",
@@ -333,6 +333,16 @@
         "command": "mcp-ollama.showIssuesPanel",
         "title": "🚨 Show Code Issues",
         "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.analyzeLargeCode",
+        "title": "📊 Analyze Large Code File",
+        "category": "SmartCode"
+      },
+      {
+        "command": "mcp-ollama.generateLargeCode",
+        "title": "🏠 Generate Large Code (1500+ lines)",
+        "category": "SmartCode"
       }
     ],
     "keybindings": [
@@ -422,6 +432,15 @@
         {
           "command": "mcp-ollama.openLabs",
           "group": "3_chat@2"
+        },
+        {
+          "command": "mcp-ollama.analyzeLargeCode",
+          "when": "editorTextFocus",
+          "group": "1_copilot@9"
+        },
+        {
+          "command": "mcp-ollama.generateLargeCode",
+          "group": "2_generate@3"
         }
       ],
       "smartcode.generate": [
@@ -447,7 +466,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "npm run compile",
-    "package": "npx vsce package --out smartcode-aiassist-3.1.1.vsix --allow-missing-repository",
+    "package": "npx vsce package --out smartcode-aiassist-3.10.2.vsix --allow-missing-repository",
     "update": "npm update && npm audit fix",
     "clean": "rm -rf out",
     "install-local": "code --install-extension smartcode-aiassist-2.9.2.vsix --force"

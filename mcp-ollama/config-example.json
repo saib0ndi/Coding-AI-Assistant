@@ -1,0 +1,17 @@
+{
+  "ollama": {
+    "host": "http://10.10.110.25:11434",
+    "model": "llama3.1:8b",
+    "timeout": 30000
+  },
+  "server": {
+    "name": "mcp-ollama",
+    "version": "1.0.0"
+  },
+  "features": {
+    "ner": true,
+    "codeCompletion": true,
+    "textGeneration": true,
+    "codeAnalysis": true
+  }
+}

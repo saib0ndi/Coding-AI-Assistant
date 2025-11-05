@@ -36,6 +36,8 @@ export interface AgentResult {
     summary: string;
     filesModified: string[];
     error?: string;
+    executionTime?: number;
+    autonomous?: boolean;
 }
 
 export interface AgentCapability {

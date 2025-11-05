@@ -19,6 +19,30 @@ export interface SearchResult {
 export class VectorStore {
   private embeddings = new Map<string, CodeEmbedding>();
   private index = new Map<string, number[]>();
+  private intentPatterns = new Map<string, RegExp[]>();
+  
+  constructor() {
+    this.initializeNLPPatterns();
+  }
+  
+  private initializeNLPPatterns(): void {
+    this.intentPatterns.set('create_directory', [
+      /create\s+(?:a\s+)?(?:directory|folder)\s+(?:named|called|with.*name.*of)?\s*([a-zA-Z0-9_-]+)/i,
+      /make\s+(?:a\s+)?(?:directory|folder)\s+([a-zA-Z0-9_-]+)/i,
+      /mkdir\s+([a-zA-Z0-9_-]+)/i
+    ]);
+    
+    this.intentPatterns.set('create_file', [
+      /create\s+(?:a\s+)?file\s+(?:named|called)?\s*([a-zA-Z0-9_.-]+)/i,
+      /make\s+(?:a\s+)?file\s+([a-zA-Z0-9_.-]+)/i
+    ]);
+    
+    this.intentPatterns.set('implement_feature', [
+      /implement\s+(.+)/i,
+      /create\s+(?:a\s+)?(.+)\s+(?:feature|component|system)/i,
+      /build\s+(?:a\s+)?(.+)/i
+    ]);
+  }
   
   async embed(code: string, language: string): Promise<number[]> {
     // Simple embedding using character frequency
@@ -66,6 +90,30 @@ export class VectorStore {
     return results
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, limit);
+  }
+  
+  parseIntent(input: string): {intent: string, target: string, confidence: number} {
+    for (const [intent, patterns] of this.intentPatterns) {
+      for (const pattern of patterns) {
+        const match = input.match(pattern);
+        if (match) {
+          return {
+            intent,
+            target: match[1] || 'unknown',
+            confidence: 0.9
+          };
+        }
+      }
+    }
+    
+    return { intent: 'unknown', target: 'unknown', confidence: 0.2 };
+  }
+  
+  async searchWithIntent(query: string, limit = 5): Promise<SearchResult[] & {intent?: any}> {
+    const intent = this.parseIntent(query);
+    const semanticResults = await this.search(query, limit);
+    
+    return Object.assign(semanticResults, { intent });
   }
   
   async findSimilar(code: string, language: string, limit = 3): Promise<SearchResult[]> {

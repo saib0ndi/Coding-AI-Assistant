@@ -55,11 +55,11 @@ export class RequestRouter {
         return complexKeywords.some(keyword => description.includes(keyword));
     }
 
-    private async handleSimpleRequest(toolName: string, params: any): Promise<any> {
+    private async handleSimpleRequest(toolName: string, params: any): Promise<string> {
         this.logger.info(`[RequestRouter] Processing simple request: ${toolName}`);
         console.log(`[RequestRouter] Routing ${toolName} to OllamaProvider`);
         
-        // Direct AI call for simple tasks
+        // Direct AI call for simple tasks - all return strings
         switch (toolName) {
             case 'explain_code':
                 console.log(`[RequestRouter] Calling explainCode for ${params.language}`);
@@ -92,15 +92,20 @@ export class RequestRouter {
         return await this.agentManager.executeTask(task);
     }
 
-    private async handleChatRequest(toolName: string, params: any): Promise<any> {
+    private async handleChatRequest(toolName: string, params: any): Promise<string> {
         this.logger.info(`Chat request: ${toolName}`);
         
         // Check if chat request should become agent task
         if (this.shouldEscalateToAgent(params)) {
-            return await this.handleAgentRequest(toolName, params);
+            const agentResult = await this.handleAgentRequest(toolName, params);
+            // Extract text from agent result if it's an object
+            if (typeof agentResult === 'object' && agentResult.summary) {
+                return agentResult.summary;
+            }
+            return String(agentResult);
         }
         
-        // Handle as simple chat
+        // Handle as simple chat - returns string
         return await this.ollamaProvider.handleChatRequest(params);
     }
 

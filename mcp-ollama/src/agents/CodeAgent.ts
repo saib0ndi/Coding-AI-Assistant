@@ -15,6 +15,34 @@ export class CodeAgent {
         this.fileSystemTool = fileSystemTool;
     }
 
+    // Fast execution capability
+    async execute(params: { action: string; params: any; context: any }): Promise<any> {
+        const { action, params: stepParams } = params;
+        
+        try {
+            // Fast code generation using phi4
+            const prompt = `Create ${stepParams.language || 'TypeScript'} code for: ${action}`;
+            const code = await this.ollamaProvider.generateText({
+                prompt,
+                model: 'phi4:latest'
+            });
+            
+            return {
+                success: true,
+                code,
+                filesModified: [`generated.${stepParams.language === 'python' ? 'py' : 'ts'}`],
+                action
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                code: `// Error generating code for: ${action}`,
+                filesModified: []
+            };
+        }
+    }
+
     async executeStep(step: WorkflowStep, context: any): Promise<any> {
         const { action } = step;
         
@@ -33,6 +61,42 @@ export class CodeAgent {
         return await this.generateCode(action, context);
     }
 
+    private async analyzeCodeAction(description: string, context: any): Promise<any> {
+        const files = context.files || [];
+        const analysisResults = [];
+        
+        for (const file of files.slice(0, 5)) {
+            try {
+                const sanitizedPath = this.sanitizeFilePath(file);
+                const exists = await this.fileExists(sanitizedPath);
+                
+                if (!exists) continue;
+                
+                const content = await this.fileSystemTool.readFile(sanitizedPath);
+                const analysis = await this.ollamaProvider.analyzeCode({
+                    code: content.substring(0, 8000),
+                    language: context.language || 'typescript',
+                    analysisType: 'bugs'
+                });
+                
+                analysisResults.push({
+                    file: sanitizedPath,
+                    analysis: analysis.analysis,
+                    suggestions: analysis.suggestions
+                });
+            } catch (error) {
+                this.logger.warn(`Failed to analyze ${file}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        }
+        
+        return {
+            success: true,
+            results: analysisResults,
+            description: `Analyzed ${analysisResults.length} files`,
+            type: 'analysis'
+        };
+    }
+
     private async implementCode(description: string, context: any): Promise<any> {
         const sanitizedDesc = this.sanitizeInput(description);
         const fileName = this.generateFileName(sanitizedDesc, context);
@@ -43,10 +107,7 @@ export class CodeAgent {
             this.logger.warn(`File ${filePath} already exists, will be overwritten`);
         }
 
-        const prompt = `Implement: ${sanitizedDesc}
-Language: ${context?.language || 'typescript'}
-
-Generate complete, working code with proper error handling.`;
+        const prompt = `Implement: ${sanitizedDesc}\nLanguage: ${context?.language || 'typescript'}\n\nGenerate complete, working code with proper error handling.`;
 
         try {
             const code = await this.ollamaProvider.generateText({
@@ -58,6 +119,7 @@ Generate complete, working code with proper error handling.`;
             await this.fileSystemTool.writeFile(filePath, sanitizedCode);
 
             return {
+                success: true,
                 filesModified: [filePath],
                 code: sanitizedCode,
                 description: `Implemented: ${sanitizedDesc}`,
@@ -74,6 +136,7 @@ Generate complete, working code with proper error handling.`;
         const sanitizedDesc = this.sanitizeInput(description);
         const fixedFiles: string[] = [];
         const failedFiles: string[] = [];
+        const fixes: any[] = [];
 
         for (const file of files) {
             try {
@@ -88,16 +151,16 @@ Generate complete, working code with proper error handling.`;
 
                 const content = await this.fileSystemTool.readFile(sanitizedPath);
                 if (content.length > 30000) {
+                    this.logger.warn(`File ${sanitizedPath} too large, skipping`);
                     failedFiles.push(file);
                     continue;
                 }
                 
-                const prompt = `Fix code: ${sanitizedDesc}
-File: ${sanitizedPath}
-Content:
-${content.substring(0, 10000)}
-
-Provide corrected code.`;
+                // Create backup
+                const backupPath = `${sanitizedPath}.backup.${Date.now()}`;
+                await this.fileSystemTool.writeFile(backupPath, content);
+                
+                const prompt = `Fix code issues: ${sanitizedDesc}\nFile: ${sanitizedPath}\nContent:\n${content.substring(0, 10000)}\n\nProvide corrected code with explanations.`;
 
                 const fixedCode = await this.ollamaProvider.generateText({
                     prompt,
@@ -106,7 +169,15 @@ Provide corrected code.`;
 
                 const sanitizedCode = this.sanitizeInput(fixedCode);
                 await this.fileSystemTool.writeFile(sanitizedPath, sanitizedCode);
+                
                 fixedFiles.push(sanitizedPath);
+                fixes.push({
+                    file: sanitizedPath,
+                    backup: backupPath,
+                    changes: 'Code fixed and improved'
+                });
+                
+                this.logger.info(`Successfully fixed: ${sanitizedPath}`);
             } catch (error) {
                 this.logger.error(`Failed to fix file: ${file}`, error);
                 this.trackFailure('fix', file, error);
@@ -115,11 +186,25 @@ Provide corrected code.`;
         }
 
         return {
+            success: failedFiles.length === 0,
             filesModified: fixedFiles,
             failedFiles,
+            fixes,
             description: `Fixed ${fixedFiles.length} files, ${failedFiles.length} failed`,
-            success: failedFiles.length === 0
+            rollback: () => this.rollbackFixes(fixes)
         };
+    }
+
+    private async rollbackFixes(fixes: any[]): Promise<void> {
+        for (const fix of fixes) {
+            try {
+                const backupContent = await this.fileSystemTool.readFile(fix.backup);
+                await this.fileSystemTool.writeFile(fix.file, backupContent);
+                this.logger.info(`Rolled back: ${fix.file}`);
+            } catch (error) {
+                this.logger.error(`Failed to rollback: ${fix.file}`);
+            }
+        }
     }
 
     private async refactorCode(description: string, context: any): Promise<any> {
@@ -127,6 +212,7 @@ Provide corrected code.`;
         const sanitizedDesc = this.sanitizeInput(description);
         const refactoredFiles: string[] = [];
         const failedFiles: string[] = [];
+        const refactorings: any[] = [];
 
         for (const file of files) {
             try {
@@ -141,16 +227,16 @@ Provide corrected code.`;
 
                 const content = await this.fileSystemTool.readFile(sanitizedPath);
                 if (content.length > 20000) {
+                    this.logger.warn(`File ${sanitizedPath} too large for refactoring, skipping`);
                     failedFiles.push(file);
                     continue;
                 }
                 
-                const prompt = `Refactor code: ${sanitizedDesc}
-File: ${sanitizedPath}
-Content:
-${content.substring(0, 8000)}
-
-Provide refactored code.`;
+                // Create backup
+                const backupPath = `${sanitizedPath}.backup.${Date.now()}`;
+                await this.fileSystemTool.writeFile(backupPath, content);
+                
+                const prompt = `Refactor code for better maintainability: ${sanitizedDesc}\nFile: ${sanitizedPath}\nContent:\n${content.substring(0, 8000)}\n\nProvide refactored code with improvements.`;
 
                 const refactoredCode = await this.ollamaProvider.generateText({
                     prompt,
@@ -159,7 +245,15 @@ Provide refactored code.`;
 
                 const sanitizedCode = this.sanitizeInput(refactoredCode);
                 await this.fileSystemTool.writeFile(sanitizedPath, sanitizedCode);
+                
                 refactoredFiles.push(sanitizedPath);
+                refactorings.push({
+                    file: sanitizedPath,
+                    backup: backupPath,
+                    improvements: 'Code refactored for better maintainability'
+                });
+                
+                this.logger.info(`Successfully refactored: ${sanitizedPath}`);
             } catch (error) {
                 this.logger.error(`Failed to refactor file: ${file}`, error);
                 this.trackFailure('refactor', file, error);
@@ -168,31 +262,72 @@ Provide refactored code.`;
         }
 
         return {
+            success: failedFiles.length === 0,
             filesModified: refactoredFiles,
             failedFiles,
+            refactorings,
             description: `Refactored ${refactoredFiles.length} files, ${failedFiles.length} failed`,
-            success: failedFiles.length === 0
+            rollback: () => this.rollbackRefactorings(refactorings)
         };
+    }
+
+    private async rollbackRefactorings(refactorings: any[]): Promise<void> {
+        for (const refactoring of refactorings) {
+            try {
+                const backupContent = await this.fileSystemTool.readFile(refactoring.backup);
+                await this.fileSystemTool.writeFile(refactoring.file, backupContent);
+                this.logger.info(`Rolled back refactoring: ${refactoring.file}`);
+            } catch (error) {
+                this.logger.error(`Failed to rollback refactoring: ${refactoring.file}`);
+            }
+        }
     }
 
     private async generateCode(description: string, context: any): Promise<any> {
         const sanitizedDesc = this.sanitizeInput(description);
-        const prompt = `Generate code for: ${sanitizedDesc}
-
-Provide complete, working code.`;
-
+        const language = context.language || 'typescript';
+        const workspacePath = context.workspacePath || '.';
+        
         try {
+            // Generate filename if not provided
+            const fileName = context.fileName || this.generateFileName(sanitizedDesc, context);
+            const filePath = this.sanitizeFilePath(`${workspacePath}/src/${fileName}`);
+            
+            const prompt = `Generate ${language} code for: ${sanitizedDesc}\n\nRequirements:\n- Complete, working code\n- Proper error handling\n- Clear documentation\n- Follow best practices\n\nProvide only the code without explanations.`;
+
             const code = await this.ollamaProvider.generateText({
                 prompt,
                 model: 'deepseek-r1:70b'
             });
 
+            const sanitizedCode = this.sanitizeInput(code);
+            
+            // Write to file if workspace path is provided
+            if (context.writeToFile !== false) {
+                await this.fileSystemTool.writeFile(filePath, sanitizedCode);
+                
+                return {
+                    success: true,
+                    code: sanitizedCode,
+                    filePath,
+                    filesModified: [filePath],
+                    description: `Generated ${language} code for: ${sanitizedDesc}`,
+                    language,
+                    type: 'generation'
+                };
+            }
+            
             return {
-                code: this.sanitizeInput(code),
-                description: `Generated code for: ${sanitizedDesc}`
+                success: true,
+                code: sanitizedCode,
+                description: `Generated ${language} code for: ${sanitizedDesc}`,
+                language,
+                type: 'generation'
             };
         } catch (error) {
+            this.logger.error(`Code generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
             return {
+                success: false,
                 code: '',
                 description: `Failed to generate code for: ${sanitizedDesc}`,
                 error: error instanceof Error ? error.message : 'Unknown error'
@@ -227,7 +362,7 @@ Provide complete, working code.`;
         const sanitized = filePath
             .replace(/\.\./g, '')
             .replace(/\/+/g, '/')
-            .replace(/^\//g, '')
+            .replace(/^\//, '')
             .replace(/[<>:"|?*]/g, '_');
         
         if (!sanitized || sanitized.includes('~') || sanitized.length > 200) {
@@ -239,7 +374,7 @@ Provide complete, working code.`;
 
     private sanitizeInput(input: string): string {
         if (!input || typeof input !== 'string') return '';
-        return input.replace(/[<>"'&;\\`$(){}\[\]|]/g, '').substring(0, 10000);
+        return input.replace(/[<>"'&;\\`$(){}[\]|]/g, '').substring(0, 10000);
     }
 
     private async fileExists(filePath: string): Promise<boolean> {
@@ -260,5 +395,43 @@ Provide complete, working code.`;
 
     getFailureReport(): Record<string, string[]> {
         return Object.fromEntries(this.failedOperations);
+    }
+
+    // Enhanced capabilities for autonomous execution
+    getCapabilities(): any {
+        return {
+            actions: ['implement', 'fix', 'refactor', 'analyze', 'generate'],
+            languages: ['typescript', 'javascript', 'python', 'java', 'go', 'rust'],
+            features: {
+                backup: true,
+                rollback: true,
+                validation: true,
+                fileOperations: true
+            },
+            limits: {
+                maxFileSize: 30000,
+                maxFiles: 10,
+                maxCodeLength: 10000
+            }
+        };
+    }
+
+    async validateExecution(result: any): Promise<boolean> {
+        if (!result || result.error) return false;
+        if (result.success === false) return false;
+        
+        // Additional validation for code operations
+        if (result.filesModified && result.filesModified.length > 0) {
+            for (const file of result.filesModified) {
+                try {
+                    const exists = await this.fileExists(file);
+                    if (!exists) return false;
+                } catch {
+                    return false;
+                }
+            }
+        }
+        
+        return true;
     }
 }

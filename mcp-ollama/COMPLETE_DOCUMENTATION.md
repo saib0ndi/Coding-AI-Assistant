@@ -86,7 +86,7 @@ mcp-ollama/
 
 ---
 
-## 🚀 Installation & Setup
+# 🚀 Installation & Setup
 
 ### Prerequisites
 - **Node.js** 18+ 

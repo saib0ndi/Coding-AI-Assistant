@@ -1,0 +1,1 @@
+#!/bin/bash\nnode /home/sb57213v/Coding-AI-Assistant/mcp-ollama/dist/index.js "$@"

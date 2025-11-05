@@ -671,6 +671,144 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
             }),
 
+            vscode.commands.registerCommand('mcp-ollama.analyzeLargeCode', async () => {
+                try {
+                    const editor = vscode.window.activeTextEditor;
+                    if (!editor) {
+                        vscode.window.showWarningMessage('No active editor found');
+                        return;
+                    }
+
+                    if (!mcpClient) {
+                        vscode.window.showErrorMessage('MCP client not initialized');
+                        return;
+                    }
+
+                    const code = editor.document.getText();
+                    const language = editor.document.languageId;
+                    const lines = code.split('\n').length;
+
+                    if (lines < 100) {
+                        vscode.window.showInformationMessage(`This file has only ${lines} lines. Use regular 'Explain Code' for smaller files.`);
+                        return;
+                    }
+
+                    await vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Notification,
+                        title: `📊 Analyzing large ${language} file (${lines} lines)...`,
+                        cancellable: false
+                    }, async (progress) => {
+                        try {
+                            progress.report({ message: 'Processing code structure...' });
+                            await mcpClient!.connect();
+                            
+                            progress.report({ message: 'Generating comprehensive analysis...' });
+                            const analysis = await mcpClient!.callTool('analyze_large_code', {
+                                code,
+                                language,
+                                analysisType: 'comprehensive'
+                            });
+                            
+                            progress.report({ message: 'Analysis complete!' });
+                            
+                            if (analysis) {
+                                const doc = await vscode.workspace.openTextDocument({
+                                    content: `# 📊 Large Code Analysis\n\n**File**: ${editor.document.fileName}\n**Language**: ${language}\n**Lines**: ${lines}\n**Characters**: ${code.length}\n\n---\n\n${analysis}`,
+                                    language: 'markdown'
+                                });
+                                await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                                vscode.window.showInformationMessage(`✅ Analysis complete for ${lines}-line ${language} file!`);
+                            } else {
+                                vscode.window.showWarningMessage('No analysis was generated');
+                            }
+                        } catch (error) {
+                            const errorMsg = `Failed to analyze large code: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                            vscode.window.showErrorMessage(errorMsg);
+                            outputChannel.appendLine(`Error: ${errorMsg}`);
+                        }
+                    });
+                } catch (error) {
+                    const errorMsg = `Large code analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                    vscode.window.showErrorMessage(errorMsg);
+                    outputChannel.appendLine(`Error: ${errorMsg}`);
+                }
+            }),
+
+            vscode.commands.registerCommand('mcp-ollama.generateLargeCode', async () => {
+                try {
+                    const description = await vscode.window.showInputBox({
+                        prompt: '🏠 Describe the large code to generate',
+                        placeHolder: 'e.g., "Complete REST API with authentication, database, and tests"',
+                        ignoreFocusOut: true
+                    });
+                    
+                    if (!description) return;
+                    
+                    const language = await vscode.window.showQuickPick(
+                        ['typescript', 'javascript', 'python', 'java', 'go', 'rust', 'cpp', 'csharp'],
+                        { placeHolder: 'Select programming language' }
+                    );
+                    
+                    if (!language) return;
+                    
+                    const codeType = await vscode.window.showQuickPick(
+                        [
+                            { label: 'Complete Application', value: 'complete_application' },
+                            { label: 'Full Class/Module', value: 'comprehensive_module' },
+                            { label: 'Entire System', value: 'entire_system' },
+                            { label: 'Full Class Implementation', value: 'full_class' }
+                        ],
+                        { placeHolder: 'Select code type to generate' }
+                    );
+                    
+                    if (!codeType) return;
+
+                    await vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Notification,
+                        title: `🏠 Generating large ${language} code...`,
+                        cancellable: false
+                    }, async (progress) => {
+                        try {
+                            if (!mcpClient) {
+                                throw new Error('MCP client not initialized');
+                            }
+                            
+                            progress.report({ message: 'Connecting to AI model...' });
+                            await mcpClient.connect();
+                            
+                            progress.report({ message: 'Generating comprehensive code (this may take 5-10 minutes)...' });
+                            const generatedCode = await mcpClient.callTool('generate_large_code', {
+                                description,
+                                language,
+                                codeType: codeType.value
+                            });
+                            
+                            progress.report({ message: 'Code generation complete!' });
+                            
+                            if (generatedCode && generatedCode.length > 100) {
+                                const lines = generatedCode.split('\n').length;
+                                const doc = await vscode.workspace.openTextDocument({
+                                    content: generatedCode,
+                                    language: language
+                                });
+                                await vscode.window.showTextDocument(doc, vscode.ViewColumn.Active);
+                                vscode.window.showInformationMessage(`✅ Generated ${lines} lines of ${language} code!`);
+                            } else {
+                                vscode.window.showWarningMessage('Generated code was too short. Try a more detailed description.');
+                            }
+                        } catch (error) {
+                            const errorMsg = `Failed to generate large code: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                            vscode.window.showErrorMessage(errorMsg);
+                            outputChannel.appendLine(`Error: ${errorMsg}`);
+                        }
+                    });
+                } catch (error) {
+                    const errorMsg = `Large code generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                    vscode.window.showErrorMessage(errorMsg);
+                    outputChannel.appendLine(`Error: ${errorMsg}`);
+                }
+            }),
+
             vscode.commands.registerCommand('mcp-ollama.executeAgentTask', async () => {
                 const instruction = await vscode.window.showInputBox({
                     prompt: '🤖 Agent Instruction',

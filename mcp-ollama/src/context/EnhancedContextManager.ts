@@ -19,6 +19,7 @@ export class EnhancedContextManager extends ContextManager {
   private vectorStore: VectorStore;
   private dependencyGraph = new Map<string, DependencyNode>();
   private symbolTable = new Map<string, SymbolReference>();
+  private conversationHistory: string[] = [];
   
   constructor() {
     super();
@@ -60,8 +61,43 @@ export class EnhancedContextManager extends ContextManager {
     return await this.vectorStore.search(query, limit);
   }
   
+  async parseNaturalLanguage(input: string, context?: any): Promise<{intent: string, target: string, confidence: number, semanticMatches: any[]}> {
+    // Get intent from VectorStore NLP
+    const intentResult = this.vectorStore.parseIntent(input);
+    
+    // Get semantic matches for context
+    const semanticMatches = await this.findSemanticMatches(input, 3);
+    
+    // Add to conversation history
+    this.conversationHistory.push(input);
+    if (this.conversationHistory.length > 10) {
+      this.conversationHistory = this.conversationHistory.slice(-10);
+    }
+    
+    return {
+      ...intentResult,
+      semanticMatches
+    };
+  }
+  
+  getConversationContext(): string[] {
+    return this.conversationHistory.slice(-5);
+  }
+  
   async findSimilarCode(code: string, language: string): Promise<any[]> {
     return await this.vectorStore.findSimilar(code, language);
+  }
+  
+  async enhanceWithSemanticContext(input: string, context?: any): Promise<any> {
+    const nlpResult = await this.parseNaturalLanguage(input, context);
+    const similarCode = context?.code ? await this.findSimilarCode(context.code, context.language || 'typescript') : [];
+    
+    return {
+      ...nlpResult,
+      similarCode,
+      conversationContext: this.getConversationContext(),
+      workspaceContext: context
+    };
   }
   
   getSymbolUsages(symbolName: string): SymbolReference | undefined {

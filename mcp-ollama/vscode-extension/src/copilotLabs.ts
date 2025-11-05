@@ -473,7 +473,17 @@ export class CopilotLabs {
         };
 
         const prompt = prompts[brushType as keyof typeof prompts] || 'Improve this code';
-        return await this.mcpClient.handleSlashCommand(`/${brushType}`, code, 'javascript');
+        
+        // Use /refactor for most brushes, /optimize for optimize, /security for secure
+        if (brushType === 'optimize') {
+            return await this.mcpClient.handleSlashCommand('/optimize', code, 'javascript');
+        } else if (brushType === 'secure') {
+            return await this.mcpClient.handleSlashCommand('/security', code, 'javascript');
+        } else {
+            // Use /refactor with specific instructions
+            const fullPrompt = `${prompt}: ${code}`;
+            return await this.mcpClient.handleSlashCommand('/refactor', fullPrompt, 'javascript');
+        }
     }
 
     private async generateDatabaseQuery(description: string, dbType: string, queryType: string): Promise<string> {
@@ -487,7 +497,18 @@ export class CopilotLabs {
     }
 
     private async translateCode(code: string, fromLang: string, toLang: string): Promise<string> {
-        return await this.mcpClient.handleSlashCommand(`/translate ${toLang}`, code, fromLang);
+        try {
+            await this.mcpClient.connect();
+            const result = await this.mcpClient.callTool('translate_code', {
+                code: code,
+                fromLanguage: fromLang,
+                toLanguage: toLang,
+                preserveComments: true
+            });
+            return typeof result === 'string' ? result : (result.translatedCode || 'Translation failed');
+        } catch (error) {
+            return `Translation failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        }
     }
 
     private async explainCode(code: string, level: string): Promise<string> {
