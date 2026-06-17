@@ -2,7 +2,7 @@
 
 Enhanced MCP server for Ollama with conversation context, multi-agent workflows, and Copilot-style tools.
 
-> **Repo docs:** See the [root README](../README.md) for monorepo layout. One-off completion reports live in [docs/archive/](docs/archive/) (historical only).
+> **Repo docs:** See the [root README](../README.md) for monorepo layout and [ARCHITECTURE.md](ARCHITECTURE.md) for the system design.
 
 ## Features
 

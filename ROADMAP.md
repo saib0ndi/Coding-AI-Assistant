@@ -20,8 +20,8 @@ Ollama (+ optional ScaledOllamaProvider)
 | Action | Path |
 |--------|------|
 | Keep | `mcp-ollama/` server + `mcp-ollama/vscode-extension/` |
-| Removed | `packages/orchestrator/` — see [packages/README.md](packages/README.md) |
-| Removed | `packages/vscode-ext/` — see [packages/README.md](packages/README.md) |
+| Removed | `packages/orchestrator/` — consolidated into `mcp-ollama/` |
+| Removed | `packages/vscode-ext/` — consolidated into `mcp-ollama/vscode-extension/` |
 | Document only | `tools/mcp-servers/` Python MCP (use if already deployed) |
 
 ---

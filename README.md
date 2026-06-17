@@ -12,7 +12,7 @@ VS Code  →  mcp-ollama/vscode-extension  (SmartCode AI Assist)
            Ollama  (local LLM)
 ```
 
-The retired `packages/orchestrator` and `packages/vscode-ext` paths were consolidated into `mcp-ollama/`. See [packages/README.md](packages/README.md).
+The retired `packages/orchestrator` and `packages/vscode-ext` paths were consolidated into `mcp-ollama/`.
 
 ## Quick start
 
@@ -44,7 +44,6 @@ Detailed guides: [mcp-ollama/QUICK_START_GUIDE.md](mcp-ollama/QUICK_START_GUIDE.
 | `mcp-ollama/` | MCP server, agents, tools, tests |
 | `mcp-ollama/vscode-extension/` | VS Code extension (published as SmartCode AI Assist) |
 | `tools/mcp-servers/` | Optional legacy Python MCP server |
-| `packages/` | Deprecated placeholder — see [packages/README.md](packages/README.md) |
 | `ROADMAP.md` | Product roadmap and consolidation plan |
 
 ## Development
@@ -72,10 +71,9 @@ Configuration: copy `mcp-ollama/.env.example` to `mcp-ollama/.env` and set `OLLA
 ## Documentation
 
 - [Tools reference](mcp-ollama/TOOLS_REFERENCE.md)
-- [Architecture overview](mcp-ollama/ARCHITECTURE_OVERVIEW.md)
-- [Agent capabilities](mcp-ollama/AGENT_CAPABILITIES.md)
+- [Architecture](mcp-ollama/ARCHITECTURE.md)
+- [Codebase documentation](mcp-ollama/CODEBASE_DOCUMENTATION.md)
 - [Roadmap](ROADMAP.md)
-- Historical one-off reports: [mcp-ollama/docs/archive/](mcp-ollama/docs/archive/) (not maintained)
 
 ## License
 
