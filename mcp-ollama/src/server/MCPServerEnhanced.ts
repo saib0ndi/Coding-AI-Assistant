@@ -36,7 +36,7 @@ export class MCPServerEnhanced extends MCPServer {
     // Generate completion with LSP context
     const completion = await (this as any).ollamaProvider.generateText({
       prompt: `Complete this ${language} code with context:\nSymbols: ${symbols.map((s: any) => s.name).join(', ')}\nCode:\n${code}`,
-      model: 'deepseek-coder-v2:236b'
+      model: (this as any).ollamaProvider.getModel(undefined, 'code')
     });
     
     // Format and validate
@@ -57,7 +57,7 @@ export class MCPServerEnhanced extends MCPServer {
   
   // Enhanced semantic search with LSP symbols
   async enhancedSemanticSearch(request: any): Promise<any> {
-    const { query, language, limit = 5, filePath } = request;
+    const { query, language, limit = 5, filePath, workspacePath } = request;
     
     // Get symbols for context if file provided
     let symbols: Symbol[] = [];
@@ -66,13 +66,14 @@ export class MCPServerEnhanced extends MCPServer {
       symbols = await (this as any).lspClient.getSymbols(filePath, fileContent);
     }
     
-    const results = await (this as any).vectorStore.search(query, limit);
+    const results = await (this as any).vectorStore.search(query, limit, workspacePath);
     
     return {
       matches: results,
       count: results.length,
       symbols: symbols.slice(0, 10),
-      contextEnhanced: symbols.length > 0
+      contextEnhanced: symbols.length > 0,
+      language,
     };
   }
   
@@ -135,7 +136,7 @@ export class MCPServerEnhanced extends MCPServer {
     
     const completion = await (this as any).ollamaProvider.generateText({
       prompt: `Complete ${language} code at line ${position.line}:\nAvailable symbols:\n${availableSymbols}\n\nCode:\n${code}`,
-      model: 'deepseek-coder-v2:236b'
+      model: (this as any).ollamaProvider.getModel(undefined, 'code')
     });
     
     return {
@@ -177,15 +178,23 @@ export class MCPServerEnhanced extends MCPServer {
 
   async handleSemanticProvider(request: any): Promise<any> {
     const { query, language, workspacePath } = request;
-    const results = await (this as any).vectorStore.search(query, 10);
+    const results = await (this as any).vectorStore.search(query, 10, workspacePath);
     
     return {
       matches: results.map((r: any) => ({
-        code: r.content || r.text,
-        similarity: r.score || 0.8,
-        location: { uri: r.filePath || 'unknown', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }
+        code: r.code,
+        similarity: r.similarity,
+        metadata: r.metadata,
+        location: {
+          uri: r.metadata?.filePath || 'unknown',
+          range: {
+            start: { line: (r.metadata?.startLine ?? 1) - 1, character: 0 },
+            end: { line: r.metadata?.endLine ?? 1, character: 0 },
+          },
+        },
       })),
-      total: results.length
+      total: results.length,
+      language,
     };
   }
 
@@ -247,6 +256,8 @@ export class MCPServerEnhanced extends MCPServer {
         return { result: await this.gitTool.createBranch(workspacePath, branch) };
       case 'diff':
         return { result: await this.gitTool.diff(workspacePath) };
+      case 'log':
+        return { result: await this.gitTool.log(workspacePath) };
       default:
         throw new Error(`Unknown git operation: ${operation}`);
     }

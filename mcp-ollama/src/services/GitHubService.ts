@@ -45,6 +45,19 @@ export class GitHubService {
     
     return headers;
   }
+
+  private async fetchGitHub(apiUrl: string): Promise<Response> {
+    const headers = this.getHeaders();
+    const response = await fetch(apiUrl, { headers });
+
+    if (response.status === 401 && headers.Authorization) {
+      const { Authorization, ...publicHeaders } = headers;
+      console.warn('[GitHubService] Authenticated GitHub request returned 401; retrying as public request');
+      return await fetch(apiUrl, { headers: publicHeaders });
+    }
+
+    return response;
+  }
   
   private parseRepoUrl(repoUrl: string): { owner: string; repo: string } {
     const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -65,7 +78,7 @@ export class GitHubService {
       const { owner, repo } = this.parseRepoUrl(repoUrl);
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
       
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
@@ -172,7 +185,7 @@ export class GitHubService {
       
       const apiUrl = `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}`;
       
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -205,7 +218,7 @@ export class GitHubService {
       const { owner, repo } = this.parseRepoUrl(repoUrl);
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contributors?per_page=${limit}`;
       
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -238,7 +251,7 @@ export class GitHubService {
       const { owner, repo } = this.parseRepoUrl(repoUrl);
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/commits?per_page=${limit}`;
       
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -271,7 +284,7 @@ export class GitHubService {
       const { owner, repo } = this.parseRepoUrl(repoUrl);
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/languages`;
       
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -436,7 +449,7 @@ export class GitHubService {
   private async getAllBranches(owner: string, repo: string): Promise<string[]> {
     try {
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/branches`;
-      const response = await fetch(apiUrl, { headers: this.getHeaders() });
+      const response = await this.fetchGitHub(apiUrl);
       
       if (!response.ok) {
         return ['main', 'master', 'develop', 'dev']; // Common fallbacks
@@ -466,7 +479,7 @@ export class GitHubService {
     // Add repository's default branch first (direct API call to avoid recursion)
     try {
       const repoApiUrl = `https://api.github.com/repos/${owner}/${repo}`;
-      const repoResponse = await fetch(repoApiUrl, { headers: this.getHeaders() });
+      const repoResponse = await this.fetchGitHub(repoApiUrl);
       if (repoResponse.ok) {
         const repoData = await repoResponse.json() as any;
         if (repoData.default_branch) {
@@ -489,7 +502,7 @@ export class GitHubService {
     for (const branch of uniqueBranches) {
       try {
         const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
-        const response = await fetch(apiUrl, { headers: this.getHeaders() });
+        const response = await this.fetchGitHub(apiUrl);
         
         if (response.ok) {
           const data = await response.json() as any;
@@ -534,7 +547,7 @@ export class GitHubService {
     // Add repository's default branch first (direct API call to avoid recursion)
     try {
       const repoApiUrl = `https://api.github.com/repos/${owner}/${repo}`;
-      const repoResponse = await fetch(repoApiUrl, { headers: this.getHeaders() });
+      const repoResponse = await this.fetchGitHub(repoApiUrl);
       if (repoResponse.ok) {
         const repoData = await repoResponse.json() as any;
         if (repoData.default_branch) {
@@ -557,7 +570,7 @@ export class GitHubService {
     for (const branch of uniqueBranches) {
       try {
         const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${dirPath}?ref=${branch}`;
-        const response = await fetch(apiUrl, { headers: this.getHeaders() });
+        const response = await this.fetchGitHub(apiUrl);
         
         if (response.ok) {
           const data = await response.json() as any;
@@ -689,5 +702,75 @@ export class GitHubService {
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pull-request review helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch the unified diff for a pull request.
+   * Returns the raw patch text (may be several hundred lines).
+   */
+  async getPullRequestDiff(owner: string, repo: string, prNumber: number): Promise<string> {
+    await this.fetchReady;
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`;
+    const res = await fetch(url, {
+      headers: { ...this.getHeaders(), Accept: 'application/vnd.github.v3.diff' },
+    });
+    if (!res.ok) throw new Error(`GitHub API ${res.status}: ${res.statusText}`);
+    return await res.text();
+  }
+
+  /**
+   * Post a review comment on a pull request.
+   *
+   * @param event  'COMMENT' (non-blocking) | 'REQUEST_CHANGES' | 'APPROVE'
+   */
+  async postPullRequestReview(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    body: string,
+    event: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' = 'COMMENT'
+  ): Promise<{ id: number; html_url: string }> {
+    await this.fetchReady;
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body, event }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`GitHub API ${res.status}: ${text}`);
+    }
+    return await res.json() as { id: number; html_url: string };
+  }
+
+  /**
+   * Post a single inline review comment on a specific line of a PR diff.
+   */
+  async postPullRequestInlineComment(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    commitId: string,
+    path: string,
+    line: number,
+    body: string
+  ): Promise<{ id: number }> {
+    await this.fetchReady;
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/comments`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body, commit_id: commitId, path, line, side: 'RIGHT' }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`GitHub API ${res.status}: ${text}`);
+    }
+    return await res.json() as { id: number };
   }
 }

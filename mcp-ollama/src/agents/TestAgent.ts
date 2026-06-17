@@ -1,9 +1,12 @@
+import * as path from 'path';
 import { OllamaProvider } from '../providers/OllamaProvider.js';
 import { FileSystemTool } from '../tools/FileSystemTool.js';
 import { BuildTool } from '../tools/BuildTool.js';
 import { WorkflowStep } from '../types/agent.js';
 import { Logger } from '../utils/Logger.js';
 import { TimeoutManager } from '../utils/TimeoutManager.js';
+import { normalizePathForWorkspace, resolveTargetFiles } from './resolveTargetFiles.js';
+import { summarizeFileChange } from '../utils/changeSummary.js';
 
 export class TestAgent {
     private logger: Logger;
@@ -27,41 +30,116 @@ export class TestAgent {
     }
 
     async executeStep(step: WorkflowStep, context: any): Promise<any> {
-        const { action } = step;
-        
-        // Use more precise action matching
-        if (action === 'generate_tests' || (action.includes('generate') && action.includes('test'))) {
-            return await this.generateTests(context);
-        }
-        
-        if (action === 'run_tests' || (action.includes('run') && action.includes('test'))) {
-            return await this.runTests(context);
-        }
-        
-        if (action === 'fix_tests' || (action.includes('fix') && action.includes('test'))) {
-            return await this.fixTests(context);
+        const enriched = {
+            ...context,
+            description: step.action || context.description,
+        };
+        const action = (step.action || '').toLowerCase();
+
+        if (
+            step.action === 'generate_tests' ||
+            (action.includes('generat') && (action.includes('test') || action.includes('spec')))
+        ) {
+            return await this.generateTests(enriched);
         }
 
-        return await this.genericTestAction(action, context);
+        if (step.action === 'run_tests' || (action.includes('run') && action.includes('test'))) {
+            return await this.runTests(enriched);
+        }
+
+        if (step.action === 'fix_tests' || (action.includes('fix') && action.includes('test'))) {
+            return await this.fixTests(enriched);
+        }
+
+        if (action.includes('coverage')) {
+            const workspacePath = this.resolveWorkspacePath(enriched);
+            return await this.analyzeCoverage(workspacePath);
+        }
+
+        // Default: treat unknown test steps as generate when a source file is named
+        const targets = this.resolveTestTargetFiles(enriched);
+        if (targets.length > 0) {
+            return await this.generateTests(enriched);
+        }
+
+        return await this.genericTestAction(step.action, enriched);
+    }
+
+    private resolveTestTargetFiles(context: any): string[] {
+        const description = String(context.description || context.params?.description || '');
+        return resolveTargetFiles(description, {
+            workspacePath: context.workspacePath,
+            files: context.files,
+            relevantChunks: context.relevantChunks,
+        });
+    }
+
+    private resolveWorkspacePath(context: any): string {
+        return path.resolve(context?.workspacePath || process.cwd());
     }
 
     private async generateTests(context: any): Promise<any> {
-        const files = (context?.files || []).slice(0, 20); // Limit files
+        const workspacePath = this.resolveWorkspacePath(context);
+        this.fileSystemTool.allowWorkspace(workspacePath);
+
+        const files = this.resolveTestTargetFiles(context).slice(0, 5);
+        if (files.length === 0) {
+            return {
+                success: false,
+                filesModified: [],
+                description: 'No source files found to test — include a path like src/tools/FileSystemTool.ts',
+                error: 'No target files',
+            };
+        }
+
         const language = this.validateLanguage(context?.language || 'typescript');
         const testFiles: string[] = [];
         const failedFiles: string[] = [];
+        const proposedChanges: Array<{
+            filePath: string;
+            original: string;
+            modified: string;
+            status: 'added' | 'modified' | 'deleted';
+            changeSummary?: string;
+            additions?: Array<{ line: number; text: string }>;
+        }> = [];
 
         for (const file of files) {
             try {
-                const sanitizedFile = this.sanitizeFilePath(file);
+                const sanitizedFile = this.sanitizeFilePath(file, context);
                 const content = await this.fileSystemTool.readFile(sanitizedFile);
-                if (content.length > 50000) { // Skip large files
+                if (content.length > 50000) {
                     failedFiles.push(file);
                     continue;
                 }
-                
+
                 const testContent = await this.generateTestForFile(content, sanitizedFile, language);
                 const testFileName = this.getTestFileName(sanitizedFile, language);
+                let original = '';
+                try {
+                    original = await this.fileSystemTool.readFile(testFileName);
+                } catch {
+                    original = '';
+                }
+
+                if (context.previewChanges) {
+                    const summary = summarizeFileChange(
+                        testFileName,
+                        original,
+                        testContent,
+                        workspacePath
+                    );
+                    proposedChanges.push({
+                        filePath: testFileName,
+                        original,
+                        modified: testContent,
+                        status: original ? 'modified' : 'added',
+                        changeSummary: summary.summary,
+                        additions: summary.additions,
+                    });
+                    continue;
+                }
+
                 await this.fileSystemTool.writeFile(testFileName, testContent);
                 testFiles.push(testFileName);
             } catch (error) {
@@ -70,93 +148,103 @@ export class TestAgent {
             }
         }
 
+        if (proposedChanges.length > 0) {
+            return {
+                success: failedFiles.length === 0,
+                filesModified: [],
+                proposedChanges,
+                failedFiles,
+                description: `Preview: ${proposedChanges.length} test file(s) for ${files.length} source file(s)`,
+            };
+        }
+
         return {
             filesModified: testFiles,
             failedFiles,
-            description: `Generated ${testFiles.length} test files, ${failedFiles.length} failed`,
-            success: failedFiles.length === 0
+            description: `Generated ${testFiles.length} test file(s), ${failedFiles.length} failed`,
+            success: testFiles.length > 0 && failedFiles.length === 0,
         };
     }
 
     private async runTests(context: any): Promise<any> {
-        const workspacePath = this.sanitizeFilePath(context?.workspacePath || '.');
-        
+        const workspacePath = this.resolveWorkspacePath(context);
+
         try {
             const testOutput = await this.buildTool.runTests(workspacePath);
             const results = this.parseTestResults(testOutput);
-            
+
             return {
                 description: `Tests completed: ${results.passed} passed, ${results.failed} failed`,
-                testOutput: this.sanitizeOutput(testOutput),
+                testOutput: this.sanitizeLogOutput(testOutput),
                 results,
                 coverage: results.coverage,
                 framework: results.framework,
-                success: results.failed === 0
+                success: results.failed === 0,
             };
         } catch (error) {
             this.logger.error('Test execution failed:', error);
             return {
                 description: 'Test execution failed',
-                testOutput: this.sanitizeOutput(error instanceof Error ? error.message : 'Unknown error'),
+                testOutput: this.sanitizeLogOutput(error instanceof Error ? error.message : 'Unknown error'),
                 results: { passed: 0, failed: 1, total: 1, framework: 'unknown' },
-                success: false
+                success: false,
             };
         }
     }
-    
+
     async analyzeCoverage(workspacePath: string): Promise<any> {
         try {
-            // Try to run coverage analysis
             const coverageOutput = await this.buildTool.runTests(workspacePath);
             const coverage = this.parseCoverageReport(coverageOutput);
-            
+
             return {
                 coverage,
                 description: `Coverage analysis: ${coverage.overall}% overall`,
-                success: true
+                success: true,
             };
         } catch (error) {
             return {
                 coverage: null,
                 description: 'Coverage analysis failed',
                 success: false,
-                error: error instanceof Error ? error.message : 'Unknown error'
+                error: error instanceof Error ? error.message : 'Unknown error',
             };
         }
     }
-    
+
     private parseCoverageReport(output: string): any {
-        const coverage = { overall: 0, files: [] };
-        
-        // Jest coverage parsing
+        const coverage = { overall: 0, files: [] as string[] };
+
         const jestCoverage = output.match(/All files\s+\|\s+(\d+(?:\.\d+)?)/);
         if (jestCoverage) {
             coverage.overall = parseFloat(jestCoverage[1]);
         }
-        
-        // Pytest coverage parsing
+
         const pytestCoverage = output.match(/TOTAL\s+\d+\s+\d+\s+(\d+)%/);
         if (pytestCoverage) {
-            coverage.overall = parseInt(pytestCoverage[1]);
+            coverage.overall = parseInt(pytestCoverage[1], 10);
         }
-        
+
         return coverage;
     }
 
     private async fixTests(context: any): Promise<any> {
-        const files = (context?.files || []).slice(0, 10); // Limit files
+        const workspacePath = this.resolveWorkspacePath(context);
+        this.fileSystemTool.allowWorkspace(workspacePath);
+
+        const files = this.resolveTestTargetFiles(context).slice(0, 10);
         const fixedFiles: string[] = [];
         const failedFiles: string[] = [];
 
         for (const file of files) {
             try {
-                const sanitizedFile = this.sanitizeFilePath(file);
+                const sanitizedFile = this.sanitizeFilePath(file, context);
                 const content = await this.fileSystemTool.readFile(sanitizedFile);
-                if (content.length > 30000) { // Skip large files
+                if (content.length > 30000) {
                     failedFiles.push(file);
                     continue;
                 }
-                
+
                 const fixedContent = await this.fixTestFile(content, sanitizedFile);
                 await this.fileSystemTool.writeFile(sanitizedFile, fixedContent);
                 fixedFiles.push(sanitizedFile);
@@ -170,99 +258,123 @@ export class TestAgent {
             filesModified: fixedFiles,
             failedFiles,
             description: `Fixed ${fixedFiles.length} test files, ${failedFiles.length} failed`,
-            success: failedFiles.length === 0
+            success: fixedFiles.length > 0 && failedFiles.length === 0,
         };
     }
 
     private async generateTestForFile(content: string, filePath: string, language: string): Promise<string> {
         const framework = this.detectTestFramework(language);
-        const sanitizedPath = this.sanitizeFilePath(filePath);
-        const sanitizedContent = content.substring(0, 500); // Much shorter for faster processing
-        
-        const prompt = `Generate ${language} ${framework} test:
+        const sanitizedContent = content.substring(0, 8000);
+
+        const prompt = `You are writing tests for an existing source file.
+
+Source file:
+${filePath}
+
+Language:
+${language}
+
+Test framework:
+${framework}
+
+Source code:
 ${sanitizedContent}
-One simple test:`;
+
+Output contract:
+- Return only valid ${language} test code for a new test file.
+- Do not include markdown fences, explanations, or summaries.
+- Cover the main public behavior, one edge case, and one failure path when applicable.
+- Use deterministic assertions.
+- Import the module under test using a relative path from the test file location.
+- Do not invent unavailable packages beyond the named framework.`;
 
         try {
             const result = await TimeoutManager.withFallback(
                 this.ollamaProvider.generateText({
                     prompt,
-                    model: 'llama3.1:8b-instruct-q4_K_M'
+                    model: this.ollamaProvider.getModel(undefined, 'code'),
                 }),
-                `// Generated test template for ${language}
-// TODO: Implement actual tests`,
-                30000 // 30 second timeout
+                `// Generated test template for ${language}\n// TODO: Implement actual tests\n`,
+                120000
             );
-            return this.sanitizeOutput(result);
+            return this.stripGeneratedCode(result);
         } catch (error) {
             this.logger.error(`Failed to generate test content for ${filePath}:`, error);
-            return `// Test generation failed for ${filePath}`;
+            throw error;
         }
     }
-    
+
     private detectTestFramework(language: string): string {
         const frameworks = this.testFrameworks[language as keyof typeof this.testFrameworks];
-        return frameworks ? frameworks[0] : 'default';
+        return frameworks ? frameworks[0] : 'jest';
     }
 
     private async fixTestFile(content: string, filePath: string): Promise<string> {
-        const sanitizedPath = this.sanitizeFilePath(filePath);
-        const sanitizedContent = content.substring(0, 800); // Much shorter
-        
-        const prompt = `Fix this ${this.detectLanguageFromPath(filePath)} test:
+        const sanitizedContent = content.substring(0, 8000);
+        const language = this.detectLanguageFromPath(filePath);
+        const prompt = `You are fixing an existing test file.
+
+File:
+${filePath}
+
+Language:
+${language}
+
+Current test code:
 ${sanitizedContent}
-Fixed code:`;
+
+Output contract:
+- Return only the complete corrected test file.
+- Do not include markdown fences, explanations, or diff markers.
+- Preserve test intent and naming where possible.`;
 
         try {
             const result = await TimeoutManager.withFallback(
                 this.ollamaProvider.generateText({
                     prompt,
-                    model: 'llama3.1:8b-instruct-q4_K_M'
+                    model: this.ollamaProvider.getModel(undefined, 'code'),
                 }),
-                content, // Return original if fix fails
-                30000 // 30 second timeout
+                content,
+                60000
             );
-            return this.sanitizeOutput(result);
+            return this.stripGeneratedCode(result);
         } catch (error) {
             this.logger.error(`Failed to fix test file ${filePath}:`, error);
-            return content; // Return original content if fix fails
+            return content;
         }
     }
 
     private detectLanguageFromPath(filePath: string): string {
-        if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'TypeScript';
-        if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'JavaScript';
-        if (filePath.endsWith('.py')) return 'Python';
-        if (filePath.endsWith('.java')) return 'Java';
-        if (filePath.endsWith('.go')) return 'Go';
-        if (filePath.endsWith('.rs')) return 'Rust';
-        return 'code';
+        if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
+        if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'javascript';
+        if (filePath.endsWith('.py')) return 'python';
+        if (filePath.endsWith('.java')) return 'java';
+        if (filePath.endsWith('.go')) return 'go';
+        if (filePath.endsWith('.rs')) return 'rust';
+        return 'typescript';
     }
 
     private getTestFileName(originalFile: string, language: string): string {
-        const parts = originalFile.split('/');
-        const fileName = parts[parts.length - 1];
-        
-        // Improved filename parsing - handle multiple dots correctly
+        const dir = path.dirname(originalFile);
+        const fileName = path.basename(originalFile);
         const lastDotIndex = fileName.lastIndexOf('.');
         const baseName = lastDotIndex > 0 ? fileName.substring(0, lastDotIndex) : fileName;
-        const extension = lastDotIndex > 0 ? fileName.substring(lastDotIndex) : '';
-        
-        // Generate test file name based on language conventions
+        const extension = lastDotIndex > 0 ? fileName.substring(lastDotIndex) : '.ts';
+
         switch (language) {
             case 'javascript':
             case 'typescript':
-                return `${baseName}.test${extension}`;
+                return path.join(dir, `${baseName}.test${extension}`);
             case 'python':
-                return `test_${baseName}.py`;
+                return path.join(dir, `test_${baseName}.py`);
             case 'java':
-                return `${baseName}Test.java`;
+                return path.join(dir, `${baseName}Test.java`);
             case 'go':
-                return `${baseName}_test.go`;
+                return path.join(dir, `${baseName}_test.go`);
             case 'rust':
-                return `${baseName}_test.rs`;
+                return path.join(dir, `${baseName}_test.rs`);
             default:
-                return `${baseName}_test${extension}`;
+                return path.join(dir, `${baseName}.test${extension}`);
         }
     }
 
@@ -272,64 +384,78 @@ Fixed code:`;
             failed: 0,
             total: 0,
             framework: 'unknown',
-            coverage: null
+            coverage: null as number | null,
         };
 
-        // Jest parsing
         const jestMatch = output.match(/(\d+) passing|Tests:\s+(\d+) passed/);
         if (jestMatch) {
             results.framework = 'jest';
-            results.passed = parseInt(jestMatch[1] || jestMatch[2]);
+            results.passed = parseInt(jestMatch[1] || jestMatch[2], 10);
         }
 
         const jestFailMatch = output.match(/(\d+) failing/);
         if (jestFailMatch) {
-            results.failed = parseInt(jestFailMatch[1]);
+            results.failed = parseInt(jestFailMatch[1], 10);
         }
 
-        // Pytest parsing
         const pytestMatch = output.match(/(\d+) passed/);
         if (pytestMatch) {
             results.framework = 'pytest';
-            results.passed = parseInt(pytestMatch[1]);
+            results.passed = parseInt(pytestMatch[1], 10);
         }
 
         const pytestFailMatch = output.match(/(\d+) failed/);
         if (pytestFailMatch) {
-            results.failed = parseInt(pytestFailMatch[1]);
+            results.failed = parseInt(pytestFailMatch[1], 10);
         }
 
         results.total = results.passed + results.failed;
         return results;
     }
 
-    private sanitizeFilePath(filePath: string): string {
-        // Remove any potentially dangerous characters
-        return filePath.replace(/[<>:"|?*]/g, '_').replace(/\.\./g, '_');
+    private sanitizeFilePath(filePath: string, context?: Record<string, unknown>): string {
+        if (!filePath || typeof filePath !== 'string') {
+            throw new Error('Valid file path required');
+        }
+        const cwd = path.resolve((context?.workspacePath as string) || process.cwd());
+        const resolved = normalizePathForWorkspace(cwd, filePath);
+        if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+            throw new Error(`Path traversal detected: ${filePath}`);
+        }
+        return resolved;
     }
 
-    private sanitizeOutput(output: string): string {
-        // Limit output size and remove sensitive information
+    private stripGeneratedCode(input: string): string {
+        let trimmed = input.trim();
+        const fenceMatch = trimmed.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```\s*$/);
+        if (fenceMatch) {
+            trimmed = fenceMatch[1];
+        } else {
+            trimmed = trimmed.replace(/^```[a-zA-Z0-9_-]*\s*\n?/, '').replace(/\n?```\s*$/, '');
+        }
+        return trimmed.endsWith('\n') ? trimmed : `${trimmed}\n`;
+    }
+
+    private sanitizeLogOutput(output: string): string {
         return output.substring(0, 10000).replace(/[\r\n\t]/g, ' ');
     }
 
     private validateLanguage(language: string): string {
         const validLanguages = ['javascript', 'typescript', 'python', 'java', 'go', 'rust'];
-        return validLanguages.includes(language) ? language : 'typescript';
+        const lower = (language || 'typescript').toLowerCase();
+        return validLanguages.includes(lower) ? lower : 'typescript';
     }
 
     private async genericTestAction(action: string, context: any): Promise<any> {
-        this.logger.info(`Executing generic test action: ${action}`);
-        
-        // Handle generic test-related actions
-        if (action.includes('coverage')) {
-            return await this.analyzeCoverage(context?.workspacePath || '.');
+        this.logger.warn(`Unhandled test action, attempting generate: ${action}`);
+        const targets = this.resolveTestTargetFiles(context);
+        if (targets.length > 0) {
+            return await this.generateTests(context);
         }
-        
         return {
-            description: `Test action '${action}' completed`,
-            success: true,
-            timestamp: new Date().toISOString()
+            description: `Test action '${action}' could not be mapped to a file`,
+            success: false,
+            error: 'No target files for test generation',
         };
     }
 }

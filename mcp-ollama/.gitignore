@@ -8,6 +8,11 @@ yarn-error.log*
 dist/
 out/
 build/
+*.tgz
+*.vsix
+*.backup
+*.egg-info/
+* copy.*
 
 # TypeScript
 *.tsbuildinfo
@@ -39,3 +44,9 @@ logs/
 # Cache
 .cache/
 *.cache
+.coding-ai/
+node_modules/
+.env
+.mcp-ollama.pid
+mnt/
+sai.ts

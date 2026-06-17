@@ -1,14 +1,17 @@
 import fetch from 'node-fetch';
 
+const OLLAMA_URL = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'deepseek-coder-v2:236b';
+
 async function test(users) {
   console.log(`Testing ${users} users...`);
   const promises = Array.from({length: users}, async (_, i) => {
     try {
-      const res = await fetch('http://10.10.110.25:11434/api/generate', {
+      const res = await fetch(`${OLLAMA_URL}/api/generate`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-          model: 'deepseek-coder-v2:236b',
+          model: OLLAMA_MODEL,
           prompt: 'Hello world',
           stream: false,
           options: {num_predict: 20}

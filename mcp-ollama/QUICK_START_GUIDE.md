@@ -18,7 +18,7 @@ ollama serve
 ollama pull deepseek-coder-v2:236b
 
 # Start MCP server
-cd /home/sb57213v/Coding-AI-Assistant/mcp-ollama
+cd /path/to/Coding-AI-Assistant/mcp-ollama
 npm start
 ```
 
@@ -33,8 +33,8 @@ Open VSCode Settings (Ctrl+,) and set:
 ```json
 {
   "mcp-ollama.enabled": true,
-  "mcp-ollama.host": "http://10.10.110.25:11434",
-  "mcp-ollama.serverUrl": "http://localhost:3077"
+  "mcp-ollama.host": "http://127.0.0.1:11434",
+  "mcp-ollama.serverUrl": "http://localhost:3078"
 }
 ```
 

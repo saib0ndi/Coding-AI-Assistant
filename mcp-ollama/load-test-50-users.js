@@ -3,8 +3,8 @@
 import fetch from 'node-fetch';
 import { performance } from 'perf_hooks';
 
-const SERVER_URL = 'http://localhost:3077';
-const OLLAMA_URL = 'http://10.10.110.25:11434';
+const SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${process.env.MCP_SERVER_PORT || 3078}`;
+const OLLAMA_URL = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
 const CONCURRENT_USERS = 50;
 const REQUESTS_PER_USER = 3;
 

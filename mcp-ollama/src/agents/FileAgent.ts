@@ -32,7 +32,7 @@ export class FileAgent {
         }
         
         if (action === 'create_directory' || action.includes('mkdir') || 
-            (action.includes('create') && action.includes('directory'))) {
+            (action.includes('create') && (action.includes('directory') || action.includes('folder')))) {
             return await this.createDirectory(params, context);
         }
 

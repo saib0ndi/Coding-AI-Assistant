@@ -1,3 +1,7 @@
+import { CodebaseIndexerRegistry } from '../indexing/CodebaseIndexerRegistry.js';
+import { EmbeddingService } from '../indexing/EmbeddingService.js';
+import type { CodeSearchHit } from '../indexing/types.js';
+
 export interface CodeEmbedding {
   id: string;
   code: string;
@@ -13,235 +17,282 @@ export interface CodeEmbedding {
 export interface SearchResult {
   code: string;
   similarity: number;
-  metadata: any;
+  metadata: Record<string, unknown>;
 }
 
+export interface IntentParseResult {
+  intent: string;
+  target: string;
+  confidence: number;
+}
+
+export interface SearchWithIntentResult {
+  results: SearchResult[];
+  intent: IntentParseResult;
+}
+
+export type VectorStoreScope = 'workspace' | 'memory';
+
+interface MemoryChunk {
+  id: string;
+  code: string;
+  embedding: number[];
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Facade for semantic search over a workspace index or an in-memory chunk store.
+ * Workspace scope delegates to CodebaseIndexer; memory scope stores ephemeral chunks (e.g. conversations).
+ */
 export class VectorStore {
-  private embeddings = new Map<string, CodeEmbedding>();
-  private index = new Map<string, number[]>();
-  private intentPatterns = new Map<string, RegExp[]>();
-  
-  constructor() {
+  private readonly scope: VectorStoreScope;
+  private readonly embedder: EmbeddingService;
+  private readonly memoryChunks = new Map<string, MemoryChunk>();
+  /** Ordered most-specific first so broad patterns do not steal matches. */
+  private intentRules: Array<{ intent: string; patterns: RegExp[]; confidence: number }> = [];
+
+  constructor(options?: { scope?: VectorStoreScope }) {
+    this.scope = options?.scope ?? 'workspace';
+    this.embedder = CodebaseIndexerRegistry.getEmbedder();
     this.initializeNLPPatterns();
   }
-  
+
+  /** Clear in-memory conversation chunks (memory scope only). */
+  clearMemoryStore(): number {
+    const count = this.memoryChunks.size;
+    this.memoryChunks.clear();
+    return count;
+  }
+
   private initializeNLPPatterns(): void {
-    this.intentPatterns.set('create_directory', [
-      /create\s+(?:a\s+)?(?:directory|folder)\s+(?:named|called|with.*name.*of)?\s*([a-zA-Z0-9_-]+)/i,
-      /make\s+(?:a\s+)?(?:directory|folder)\s+([a-zA-Z0-9_-]+)/i,
-      /mkdir\s+([a-zA-Z0-9_-]+)/i
-    ]);
-    
-    this.intentPatterns.set('create_file', [
-      /create\s+(?:a\s+)?file\s+(?:named|called)?\s*([a-zA-Z0-9_.-]+)/i,
-      /make\s+(?:a\s+)?file\s+([a-zA-Z0-9_.-]+)/i
-    ]);
-    
-    this.intentPatterns.set('implement_feature', [
-      /implement\s+(.+)/i,
-      /create\s+(?:a\s+)?(.+)\s+(?:feature|component|system)/i,
-      /build\s+(?:a\s+)?(.+)/i
-    ]);
+    const pathTarget = '([\\w./-]+)';
+
+    this.intentRules = [
+      {
+        intent: 'create_directory',
+        confidence: 0.92,
+        patterns: [
+          new RegExp(`\\bmkdir\\s+(?:-p\\s+)?${pathTarget}`, 'i'),
+          new RegExp(
+            `\\b(?:create|make)\\s+(?:a\\s+)?(?:directory|folder|dir)\\s+(?:named|called)?\\s*${pathTarget}`,
+            'i'
+          ),
+        ],
+      },
+      {
+        intent: 'create_file',
+        confidence: 0.9,
+        patterns: [
+          new RegExp(
+            `\\b(?:create|make|add)\\s+(?:a\\s+)?(?:new\\s+)?file\\s+(?:named|called)?\\s*${pathTarget}`,
+            'i'
+          ),
+        ],
+      },
+      {
+        intent: 'generate_tests',
+        confidence: 0.9,
+        patterns: [
+          /\b(?:generate|write|add|create)\s+(?:unit\s+)?tests?\s+(?:for\s+)?(.+)/i,
+          /\btest\s+(?:coverage\s+for|file\s+for)\s+(.+)/i,
+        ],
+      },
+      {
+        intent: 'fix_code',
+        confidence: 0.88,
+        patterns: [
+          /\b(?:fix|repair|resolve)\s+(?:the\s+)?(?:bug|error|issue|problem)\s+(?:in\s+)?(.+)/i,
+          /\b(?:fix|repair)\s+(?:code\s+in\s+)?(.+)/i,
+        ],
+      },
+      {
+        intent: 'implement_feature',
+        confidence: 0.75,
+        patterns: [
+          /\bimplement\s+(?:a\s+)?(?:new\s+)?(.+?)(?:\s+(?:feature|component|module|system))?\s*$/i,
+          /\bcreate\s+(?:a\s+)?(.+?)\s+(?:feature|component|module|system)\b/i,
+          /\bbuild\s+(?:a\s+)?(.+?)\s+(?:feature|component|module|system)\b/i,
+        ],
+      },
+      {
+        intent: 'refactor',
+        confidence: 0.8,
+        patterns: [/\brefactor\s+(.+)/i, /\brestructure\s+(.+)/i],
+      },
+    ];
   }
-  
-  async embed(code: string, language: string): Promise<number[]> {
-    // Simple embedding using character frequency
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789{}()[];.,';
-    const vector = new Array(chars.length).fill(0);
-    
-    const normalized = code.toLowerCase().replace(/\s+/g, '');
-    for (const char of normalized) {
-      const idx = chars.indexOf(char);
-      if (idx >= 0) vector[idx]++;
-    }
-    
-    // Normalize vector
-    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-    return magnitude > 0 ? vector.map(val => val / magnitude) : vector;
+
+  private normalizeIntentTarget(raw: string): string {
+    return raw.replace(/[.,;:!?]+$/, '').trim();
   }
-  
-  async addCode(id: string, code: string, metadata: any): Promise<void> {
-    const embedding = await this.embed(code, metadata.language);
-    
-    this.embeddings.set(id, {
-      id,
-      code,
-      embedding,
-      metadata
-    });
-    
-    this.index.set(id, embedding);
+
+  async embed(code: string, language = 'typescript'): Promise<number[]> {
+    const text = language ? `${language}\n${code}` : code;
+    return this.embedder.embed(text.slice(0, 8000));
   }
-  
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
-    const queryEmbedding = await this.embed(query, 'text');
-    const results: SearchResult[] = [];
-    
-    for (const [id, codeEmb] of this.embeddings) {
-      const similarity = this.cosineSimilarity(queryEmbedding, codeEmb.embedding);
-      
-      results.push({
-        code: codeEmb.code,
-        similarity,
-        metadata: codeEmb.metadata
+
+  async addCode(id: string, code: string, metadata: Record<string, unknown>): Promise<void> {
+    const trimmed = code.trim().slice(0, 8000);
+    if (!trimmed) return;
+
+    const embedding = await this.embedder.embed(trimmed);
+
+    if (this.scope === 'memory') {
+      this.memoryChunks.set(id, {
+        id,
+        code: trimmed,
+        embedding,
+        metadata: { ...metadata, id },
       });
+      return;
     }
-    
-    return results
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, limit);
+
+    const workspacePath =
+      typeof metadata.workspacePath === 'string' ? metadata.workspacePath : process.cwd();
+    const filePath =
+      typeof metadata.filePath === 'string' ? metadata.filePath : `__memory__/${id}.txt`;
+    const language =
+      typeof metadata.language === 'string' ? metadata.language : 'text';
+
+    const indexer = CodebaseIndexerRegistry.get(workspacePath);
+    await indexer.load();
+    await indexer.indexFiles([
+      {
+        path: filePath,
+        content: trimmed,
+        language,
+      },
+    ]);
   }
-  
-  parseIntent(input: string): {intent: string, target: string, confidence: number} {
-    for (const [intent, patterns] of this.intentPatterns) {
-      for (const pattern of patterns) {
-        const match = input.match(pattern);
-        if (match) {
-          return {
-            intent,
-            target: match[1] || 'unknown',
-            confidence: 0.9
-          };
-        }
+
+  async search(
+    query: string,
+    limit = 5,
+    workspacePath?: string,
+    metadataFilter?: (metadata: Record<string, unknown>) => boolean
+  ): Promise<SearchResult[]> {
+    if (this.scope === 'memory') {
+      return this.searchMemory(query, limit, metadataFilter);
+    }
+
+    const indexer = CodebaseIndexerRegistry.get(workspacePath);
+    await indexer.load();
+    if (indexer.getStatus().chunkCount === 0) {
+      await indexer.indexWorkspace();
+    }
+    const hits = await indexer.search(query, limit);
+    return hits.map((h) => this.hitToResult(h));
+  }
+
+  parseIntent(input: string): IntentParseResult {
+    const text = input.trim();
+    if (!text) {
+      return { intent: 'unknown', target: 'unknown', confidence: 0 };
+    }
+
+    for (const rule of this.intentRules) {
+      for (const pattern of rule.patterns) {
+        const match = text.match(pattern);
+        if (!match?.[1]) continue;
+
+        const target = this.normalizeIntentTarget(match[1]);
+        if (!target || target.length > 500) continue;
+
+        return { intent: rule.intent, target, confidence: rule.confidence };
       }
     }
-    
+
     return { intent: 'unknown', target: 'unknown', confidence: 0.2 };
   }
-  
-  async searchWithIntent(query: string, limit = 5): Promise<SearchResult[] & {intent?: any}> {
+
+  async searchWithIntent(
+    query: string,
+    limit = 5,
+    workspacePath?: string
+  ): Promise<SearchWithIntentResult> {
     const intent = this.parseIntent(query);
-    const semanticResults = await this.search(query, limit);
-    
-    return Object.assign(semanticResults, { intent });
+    const results = await this.search(query, limit, workspacePath);
+    return { results, intent };
   }
-  
-  async findSimilar(code: string, language: string, limit = 3): Promise<SearchResult[]> {
-    const embedding = await this.embed(code, language);
-    const results: SearchResult[] = [];
-    
-    for (const [id, codeEmb] of this.embeddings) {
-      if (codeEmb.metadata.language === language) {
-        const similarity = this.cosineSimilarity(embedding, codeEmb.embedding);
-        
-        results.push({
-          code: codeEmb.code,
-          similarity,
-          metadata: codeEmb.metadata
-        });
-      }
+
+  async findSimilar(
+    code: string,
+    language: string,
+    limit = 3,
+    workspacePath?: string
+  ): Promise<SearchResult[]> {
+    if (this.scope === 'memory') {
+      return this.searchMemory(`${language}\n${code}`, limit);
     }
-    
-    return results
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, limit);
-  }
-  
-  private cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < Math.min(a.length, b.length); i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
+
+    const indexer = CodebaseIndexerRegistry.get(workspacePath);
+    await indexer.load();
+    if (indexer.getStatus().chunkCount === 0) {
+      await indexer.indexWorkspace();
     }
-    
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+    const hits = await indexer.findSimilar(code, language, limit);
+    return hits.map((h) => this.hitToResult(h));
   }
-  
-  async indexCodebase(files: Array<{path: string; content: string; language: string}>): Promise<void> {
-    for (const file of files) {
-      // Extract functions and classes
-      const functions = this.extractFunctions(file.content, file.language);
-      
-      for (const func of functions) {
-        const id = `${file.path}:${func.name}`;
-        await this.addCode(id, func.code, {
-          language: file.language,
-          filePath: file.path,
-          functionName: func.name,
-          type: func.type
-        });
-      }
+
+  async indexCodebase(
+    files: Array<{ path: string; content: string; language: string }>,
+    workspacePath?: string
+  ): Promise<void> {
+    const root = workspacePath || process.cwd();
+    const indexer = CodebaseIndexerRegistry.get(root);
+
+    if (files.length === 0) {
+      await indexer.indexWorkspace({ force: false });
+      return;
     }
+
+    await indexer.indexFiles(files);
   }
-  
-  private extractFunctions(code: string, language: string): Array<{name: string; code: string; type: string}> {
-    const functions: Array<{name: string; code: string; type: string}> = [];
-    const lines = code.split('\n');
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
-      // JavaScript/TypeScript functions
-      if (language === 'javascript' || language === 'typescript') {
-        const funcMatch = line.match(/(?:function|const|let)\s+(\w+)|(\w+)\s*[:=]\s*(?:async\s+)?(?:\([^)]*\)|[^=]+)\s*=>/);
-        if (funcMatch) {
-          const name = funcMatch[1] || funcMatch[2];
-          const funcCode = this.extractBlock(lines, i);
-          functions.push({ name, code: funcCode, type: 'function' });
-        }
-        
-        const classMatch = line.match(/class\s+(\w+)/);
-        if (classMatch) {
-          const name = classMatch[1];
-          const classCode = this.extractBlock(lines, i);
-          functions.push({ name, code: classCode, type: 'class' });
-        }
-      }
-      
-      // Python functions
-      if (language === 'python') {
-        const funcMatch = line.match(/def\s+(\w+)/);
-        if (funcMatch) {
-          const name = funcMatch[1];
-          const funcCode = this.extractPythonBlock(lines, i);
-          functions.push({ name, code: funcCode, type: 'function' });
-        }
-        
-        const classMatch = line.match(/class\s+(\w+)/);
-        if (classMatch) {
-          const name = classMatch[1];
-          const classCode = this.extractPythonBlock(lines, i);
-          functions.push({ name, code: classCode, type: 'class' });
-        }
-      }
+
+  private async searchMemory(
+    query: string,
+    limit: number,
+    metadataFilter?: (metadata: Record<string, unknown>) => boolean
+  ): Promise<SearchResult[]> {
+    if (this.memoryChunks.size === 0) {
+      return [];
     }
-    
-    return functions;
-  }
-  
-  private extractBlock(lines: string[], startIndex: number): string {
-    const result = [lines[startIndex]];
-    let braceCount = (lines[startIndex].match(/{/g) || []).length - (lines[startIndex].match(/}/g) || []).length;
-    
-    for (let i = startIndex + 1; i < lines.length && braceCount > 0; i++) {
-      result.push(lines[i]);
-      braceCount += (lines[i].match(/{/g) || []).length - (lines[i].match(/}/g) || []).length;
-    }
-    
-    return result.join('\n');
-  }
-  
-  private extractPythonBlock(lines: string[], startIndex: number): string {
-    const result = [lines[startIndex]];
-    const baseIndent = lines[startIndex].length - lines[startIndex].trimStart().length;
-    
-    for (let i = startIndex + 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.trim() === '') {
-        result.push(line);
+
+    const queryEmbedding = await this.embedder.embed(query);
+    const hits: SearchResult[] = [];
+
+    for (const chunk of this.memoryChunks.values()) {
+      if (metadataFilter && !metadataFilter(chunk.metadata)) {
         continue;
       }
-      
-      const indent = line.length - line.trimStart().length;
-      if (indent <= baseIndent) break;
-      
-      result.push(line);
+      const similarity = EmbeddingService.cosineSimilarity(queryEmbedding, chunk.embedding);
+      if (similarity < 0.05) continue;
+      hits.push({
+        code: chunk.code,
+        similarity,
+        metadata: { ...chunk.metadata },
+      });
     }
-    
-    return result.join('\n');
+
+    return hits.sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+  }
+
+  private hitToResult(hit: CodeSearchHit): SearchResult {
+    const symbolType = hit.symbolType;
+    return {
+      code: hit.code,
+      similarity: hit.similarity,
+      metadata: {
+        id: hit.id,
+        filePath: hit.filePath,
+        functionName:
+          symbolType === 'function' || symbolType === 'method' ? hit.symbolName : undefined,
+        className: symbolType === 'class' ? hit.symbolName : undefined,
+        symbolName: hit.symbolName,
+        symbolType: hit.symbolType,
+        startLine: hit.startLine,
+        endLine: hit.endLine,
+      },
+    };
   }
 }

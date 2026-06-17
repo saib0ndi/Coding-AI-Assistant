@@ -284,14 +284,26 @@ export class ProjectAgent {
 
     private async genericProjectAction(action: string, context: any): Promise<any> {
         const sanitizedAction = this.sanitizeInput(action);
-        const prompt = `Execute project action: ${sanitizedAction}
+        const prompt = `You are a senior project automation assistant.
 
-Provide step-by-step instructions for this project-level action.`;
+Project action:
+${sanitizedAction}
+
+Workspace:
+${this.sanitizePath(context?.workspacePath || '.')}
+
+Output contract:
+- Provide concise, executable steps.
+- Include commands only when they are safe and directly relevant.
+- Mention files that should be inspected or changed.
+- Do not claim commands were run.
+- Include validation steps at the end.
+- Avoid destructive git or filesystem operations unless explicitly requested.`;
 
         try {
             const instructions = await this.ollamaProvider.generateText({
                 prompt,
-                model: 'deepseek-r1:70b'
+                model: this.ollamaProvider.getModel(undefined, 'code')
             });
 
             return {

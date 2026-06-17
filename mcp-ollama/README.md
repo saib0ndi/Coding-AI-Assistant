@@ -1,6 +1,8 @@
 # MCP-Ollama v2.0.0
 
-Enhanced MCP server for Ollama with conversation context and 12 AI tools.
+Enhanced MCP server for Ollama with conversation context, multi-agent workflows, and Copilot-style tools.
+
+> **Repo docs:** See the [root README](../README.md) for monorepo layout. One-off completion reports live in [docs/archive/](docs/archive/) (historical only).
 
 ## Features
 
@@ -43,7 +45,7 @@ npm test
 
 ### Option 1: Use Hosted Docker Server (Recommended)
 The extension is pre-configured to use our hosted server:
-- **Server URL**: `http://10.10.110.22:15267`
+- **Server URL**: `http://localhost:3078`
 - **All 12 tools available instantly**
 - **No setup required**
 
@@ -60,9 +62,9 @@ npm start
 
 ## Configuration
 
-- **Hosted Server**: `http://10.10.110.22:15267` (default)
-- **Local Server**: `http://localhost:3077`
-- **Ollama Backend**: `http://10.10.110.25:11434`
+- **Hosted Server**: `http://localhost:3078` (default)
+- **Local Server**: `http://localhost:3078`
+- **Ollama Backend**: `http://127.0.0.1:11434`
 
 ## Test Results
 

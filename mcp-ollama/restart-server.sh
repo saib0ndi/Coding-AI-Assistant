@@ -3,21 +3,28 @@
 # Restart MCP-Ollama Server Script
 echo "🔄 Restarting MCP-Ollama Server..."
 
-# Kill existing processes
-echo "📋 Stopping existing processes..."
-pkill -f "mcp-ollama" || true
-pkill -f "node.*index.js" || true
-sleep 2
-
 # Build the project
 echo "🔨 Building project..."
-cd /home/sb57213v/Coding-AI-Assistant/mcp-ollama
+cd "$(dirname "$0")"
+PID_FILE=".mcp-ollama.pid"
+
+if [ -f "$PID_FILE" ]; then
+    OLD_PID="$(cat "$PID_FILE")"
+    if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" > /dev/null; then
+        echo "📋 Stopping previous MCP server process (PID: $OLD_PID)..."
+        kill "$OLD_PID" || true
+        sleep 2
+    fi
+    rm -f "$PID_FILE"
+fi
+
 npm run build 2>/dev/null || echo "⚠️  Build step skipped"
 
 # Start the server
 echo "🚀 Starting MCP server..."
 npm start &
 SERVER_PID=$!
+echo "$SERVER_PID" > "$PID_FILE"
 
 # Wait a moment for server to start
 sleep 3
@@ -25,7 +32,7 @@ sleep 3
 # Check if server is running
 if ps -p $SERVER_PID > /dev/null; then
     echo "✅ MCP server started successfully (PID: $SERVER_PID)"
-    echo "🌐 Server should be available at http://localhost:3077"
+    echo "🌐 Server should be available at http://localhost:${MCP_SERVER_PORT:-3078}"
 else
     echo "❌ Failed to start MCP server"
     exit 1

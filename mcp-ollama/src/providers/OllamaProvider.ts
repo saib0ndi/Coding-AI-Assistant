@@ -1,7 +1,25 @@
 import fetch, { RequestInit, Response } from 'node-fetch';
 import nlp from 'compromise';
+import { AsyncLocalStorage } from 'async_hooks';
+
+export interface CloudSettings {
+  apiKey?: string | undefined;
+  baseUrl?: string | undefined;
+  model?: string | undefined;
+}
+
+export const cloudSettingsStorage = new AsyncLocalStorage<CloudSettings>();
+
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+type ConversationMessage = { role: 'user' | 'assistant'; content: string };
+
 // Use built-in AbortController for Node.js 16+
 const AbortController = globalThis.AbortController;
+
+function stripThinkingBlocks(text: string): string {
+  // Remove <think>...</think> and <thinking>...</thinking> blocks produced by reasoning models
+  return text.replace(/<think(?:ing)?>[^]*?<\/think(?:ing)?>/gi, '').trim();
+}
 
 type OllamaGenerateResponse = {
   response?: string;
@@ -27,6 +45,7 @@ import {
   QuickFixRequest,
   ValidationRequest,
 } from '../types/index.js';
+import { loadAppConfig } from '../config/AppConfig.js';
 
 async function fetchWithTimeout(
   url: string,
@@ -42,9 +61,15 @@ async function fetchWithTimeout(
   }
 }
 
+function ollamaHeaders(headers: Record<string, string> = {}): Record<string, string> {
+  const token = loadAppConfig().ollama.authToken;
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+}
+
 export class OllamaProvider implements AIProvider {
   private config: OllamaConfig;
   private validatedHost: string;
+  private readonly agentLabel: string | undefined;
 
   private memoryLimit = 1024 * 1024 * 1024; // 1GB
   private lastCleanup = Date.now();
@@ -52,15 +77,98 @@ export class OllamaProvider implements AIProvider {
   private readonly CACHE_TTL = 30 * 60 * 1000; // 30 minutes
   private monitoringInterval?: ReturnType<typeof setInterval>;
 
-  constructor(config: OllamaConfig) {
+  /**
+   * Optional wrapper around every low-level Ollama request. Used by the
+   * registry to route calls through a per-role circuit breaker (fail fast when
+   * the endpoint is down) and the shared scaling layer (concurrency + load
+   * balancing). Defaults to running the request directly.
+   */
+  private requestGuard?: <T>(fn: () => Promise<T>) => Promise<T>;
+
+  setRequestGuard(guard: <T>(fn: () => Promise<T>) => Promise<T>): void {
+    this.requestGuard = guard;
+  }
+
+  constructor(config: OllamaConfig, agentLabel?: string) {
+    this.agentLabel = agentLabel;
     this.validatedHost = this.validateAndSanitizeHost(config.host);
     this.config = { ...config, host: this.validatedHost };
-    console.log(`[OllamaProvider] Initialized with host: ${this.validatedHost}`);
+    if (!agentLabel) {
+      console.log(`[OllamaProvider] Initialized with host: ${this.validatedHost} model: ${config.model}`);
+    }
     
     // Only start monitoring if explicitly enabled
     if (typeof process !== 'undefined' && process.env?.ENABLE_MEMORY_MONITORING === 'true') {
       this.startResourceMonitoring();
     }
+  }
+
+  private isStrictAlternatingCloudEndpoint(settings: CloudSettings): boolean {
+    const baseUrl = (settings.baseUrl || '').toLowerCase();
+    const model = (settings.model || '').toLowerCase();
+
+    return (
+      baseUrl.includes('integrate.api.nvidia.com') ||
+      model.includes('sarvam') ||
+      model.includes('sarvamai')
+    );
+  }
+
+  private normalizeAlternatingHistory(rawMessages: ConversationMessage[]): ConversationMessage[] {
+    const collapsed: ConversationMessage[] = [];
+
+    for (const msg of rawMessages) {
+      if (collapsed.length > 0 && collapsed[collapsed.length - 1].role === msg.role) {
+        collapsed[collapsed.length - 1] = msg;
+      } else {
+        collapsed.push(msg);
+      }
+    }
+
+    while (collapsed.length > 0 && collapsed[0].role !== 'user') {
+      collapsed.shift();
+    }
+
+    while (collapsed.length > 0 && collapsed[collapsed.length - 1].role === 'user') {
+      collapsed.pop();
+    }
+
+    const alternating: ConversationMessage[] = [];
+    let expectedRole: ConversationMessage['role'] = 'user';
+    for (const msg of collapsed) {
+      if (msg.role !== expectedRole) continue;
+      alternating.push(msg);
+      expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
+    }
+
+    return alternating;
+  }
+
+  private buildCloudMessages(
+    rawPriorMessages: ConversationMessage[],
+    systemPrompt: string,
+    userMessage: string,
+    settings: CloudSettings
+  ): ChatMessage[] {
+    const priorMessages = this.normalizeAlternatingHistory(rawPriorMessages);
+
+    if (this.isStrictAlternatingCloudEndpoint(settings)) {
+      const currentUserContent = [
+        `System instructions:\n${systemPrompt}`,
+        `User request:\n${userMessage}`
+      ].join('\n\n');
+
+      return [
+        ...priorMessages,
+        { role: 'user', content: currentUserContent }
+      ];
+    }
+
+    return [
+      { role: 'system', content: systemPrompt },
+      ...priorMessages,
+      { role: 'user', content: userMessage }
+    ];
   }
 
   private startResourceMonitoring(): void {
@@ -131,17 +239,18 @@ export class OllamaProvider implements AIProvider {
         throw new Error('Invalid protocol: only HTTP and HTTPS are allowed');
       }
 
-      // Allow localhost for development and specific Ollama server
+      // Allow localhost for development only
       const hostname = url.hostname.toLowerCase();
-      const allowedHosts = ['localhost', '127.0.0.1', '::1', '10.10.110.25'];
+      const allowedHosts = loadAppConfig().ollama.allowedHosts;
       
-      if (!allowedHosts.includes(hostname) && this.isPrivateIP(hostname)) {
-        throw new Error('Access to private IP ranges is not allowed');
-      }
-
-      // Block metadata services
-      if (['169.254.169.254', 'metadata.google.internal'].includes(hostname)) {
-        throw new Error('Access to metadata services is not allowed');
+      if (!allowedHosts.includes(hostname)) {
+        // Block all private/metadata IPs not in the explicit allowlist
+        if (this.isPrivateIP(hostname)) {
+          throw new Error(`Access to private IP not in allowlist: ${hostname}`);
+        }
+        if (['169.254.169.254', 'metadata.google.internal'].includes(hostname)) {
+          throw new Error('Access to metadata services is not allowed');
+        }
       }
 
       return url.origin;
@@ -177,6 +286,29 @@ export class OllamaProvider implements AIProvider {
     return false;
   }
 
+  getHost(): string {
+    return this.validatedHost;
+  }
+
+  getDefaultModel(): string {
+    return this.config.model;
+  }
+
+  /** Resolve model: explicit override > purpose env > OLLAMA_MODEL > configured default */
+  getModel(override?: string, purpose: 'default' | 'fast' | 'code' = 'default'): string {
+    if (override) return override;
+    if (purpose === 'fast' && process.env.OLLAMA_FAST_MODEL) {
+      return process.env.OLLAMA_FAST_MODEL;
+    }
+    if (purpose === 'code' && process.env.OLLAMA_CODE_MODEL) {
+      return process.env.OLLAMA_CODE_MODEL;
+    }
+    if (process.env.OLLAMA_MODEL) {
+      return process.env.OLLAMA_MODEL;
+    }
+    return this.config.model;
+  }
+
   async generateText({
     prompt,
     model,
@@ -186,15 +318,31 @@ export class OllamaProvider implements AIProvider {
     model?: string;
     stream?: boolean;
   }): Promise<string> {
+    const cloudSettings = cloudSettingsStorage.getStore();
+    const apiKey = cloudSettings?.apiKey || process.env.CLOUD_API_KEY || process.env.OPENAI_API_KEY;
+    const isLocal = model ? await this.isLocalModel(model) : false;
+    if (apiKey && !isLocal) {
+      const activeSettings: CloudSettings = {
+        apiKey,
+        baseUrl: cloudSettings?.baseUrl || process.env.CLOUD_BASE_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1',
+        model: cloudSettings?.model || process.env.CLOUD_MODEL || process.env.OPENAI_MODEL_NAME || 'gpt-4o'
+      };
+      try {
+        return await this.callCloudAPI(prompt, model, stream, activeSettings);
+      } catch (error) {
+        console.error('Cloud API text generation failed:', error);
+        return `I'm unable to generate text right now as the Cloud API returned an error: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
     try {
       // Use streaming for large prompts
       if (prompt.length > 10000 || stream) {
-        return await this.generateTextStreaming(prompt, model || this.config.model);
+        return await this.generateTextStreaming(prompt, this.getModel(model));
       }
       
       const dynamicTimeout = this.calculateDynamicTimeout(prompt, '');
       const data = await this.callOllamaWithRetry({
-        model: model || this.config.model,
+        model: this.getModel(model),
         prompt,
         stream: false,
       }, dynamicTimeout);
@@ -217,7 +365,7 @@ export class OllamaProvider implements AIProvider {
         `${this.validatedHost}/api/generate`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: ollamaHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ model, prompt, stream: true }),
         },
         timeout
@@ -227,49 +375,84 @@ export class OllamaProvider implements AIProvider {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      const reader = (response.body as any)?.getReader();
-      if (!reader) throw new Error('No response body');
-      
-      const decoder = new TextDecoder();
-      let buffer = '';
-      const maxBufferSize = 1024 * 1024; // 1MB buffer limit
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        
-        // Prevent buffer overflow
-        if (buffer.length + chunk.length > maxBufferSize) {
-          console.warn('Buffer overflow prevented, processing partial data');
-          break;
-        }
-        
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const data = JSON.parse(line);
-              if (data.response) {
-                chunks.push(data.response);
-              }
-            } catch (e) {
-              // Skip invalid JSON lines
-            }
-          }
-        }
-      }
-      
-      return chunks.join('');
+      return await this.readOllamaStreamingResponse(response);
     } catch (error) {
       console.error('Streaming generation failed:', error);
       // Fallback to non-streaming
       const data = await this.callOllamaWithRetry({ model, prompt, stream: false }, timeout);
-      return data.response || '';
+      return stripThinkingBlocks(data.response || '');
+    }
+  }
+
+  private async readOllamaStreamingResponse(response: Pick<Response, 'body'>): Promise<string> {
+    if (!response.body) {
+      throw new Error('No response body');
+    }
+
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const maxBufferSize = 1024 * 1024; // 1MB buffer limit
+
+    const appendChunk = (value: Uint8Array | Buffer | string): boolean => {
+      const chunk = typeof value === 'string'
+        ? value
+        : decoder.decode(value, { stream: true });
+
+      if (buffer.length + chunk.length > maxBufferSize) {
+        console.warn('Buffer overflow prevented, processing partial data');
+        return false;
+      }
+
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      this.collectStreamingLines(lines, chunks);
+      return true;
+    };
+
+    const webReader = (response.body as any).getReader?.();
+    if (webReader) {
+      while (true) {
+        const { done, value } = await webReader.read();
+        if (done) break;
+        if (!appendChunk(value)) break;
+      }
+    } else if (Symbol.asyncIterator in (response.body as any)) {
+      for await (const value of response.body as any) {
+        if (!appendChunk(value)) break;
+      }
+    } else {
+      throw new Error('Unsupported response body stream');
+    }
+
+    const remainder = decoder.decode();
+    if (remainder) {
+      appendChunk(remainder);
+    }
+
+    if (buffer.trim()) {
+      this.collectStreamingLines([buffer], chunks);
+    }
+
+    return stripThinkingBlocks(chunks.join(''));
+  }
+
+  private collectStreamingLines(lines: string[], chunks: string[]): void {
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      try {
+        const data = JSON.parse(line) as OllamaGenerateResponse;
+        if (data.response) {
+          chunks.push(data.response);
+        }
+      } catch {
+        // Skip invalid JSON lines from partial or noisy streams.
+      }
     }
   }
 
@@ -295,7 +478,7 @@ export class OllamaProvider implements AIProvider {
     try {
       const res = await fetchWithTimeout(
         `${this.validatedHost}/api/tags`,
-        { method: 'GET' },
+        { method: 'GET', headers: ollamaHeaders() },
         this.config.timeout || 30000
       );
       return res.ok;
@@ -309,7 +492,7 @@ export class OllamaProvider implements AIProvider {
     try {
       const res = await fetchWithTimeout(
         `${this.validatedHost}/api/tags`,
-        { method: 'GET' },
+        { method: 'GET', headers: ollamaHeaders() },
         this.config.timeout || 30000
       );
       if (!res.ok) {
@@ -635,27 +818,34 @@ Explain what this code does, how it works, and any important details:`;
     timeoutMs: number,
     maxRetries: number = 3
   ): Promise<OllamaGenerateResponse> {
-    let lastError: Error | null = null;
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        return await this.callOllamaWithTimeout(params, timeoutMs);
-      } catch (error) {
-        lastError = error as Error;
-        
-        // Don't retry on non-transient errors
-        if (error instanceof Error && (error.message.includes('404') || error.message.includes('401'))) {
-          throw error;
-        }
-        
-        if (attempt < maxRetries - 1) {
-          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-          await new Promise(resolve => setTimeout(resolve, delay));
+    // The entire retry sequence is treated as a single guarded operation so
+    // that an open circuit fails fast (no retries/timeouts) and one logical
+    // request counts as one breaker success/failure.
+    const run = async (): Promise<OllamaGenerateResponse> => {
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          return await this.callOllamaWithTimeout(params, timeoutMs);
+        } catch (error) {
+          lastError = error as Error;
+
+          // Don't retry on non-transient errors
+          if (error instanceof Error && (error.message.includes('404') || error.message.includes('401'))) {
+            throw error;
+          }
+
+          if (attempt < maxRetries - 1) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
       }
-    }
-    
-    throw lastError;
+
+      throw lastError;
+    };
+
+    return this.requestGuard ? this.requestGuard(run) : run();
   }
 
   private async callOllamaWithTimeout(params: {
@@ -664,17 +854,32 @@ Explain what this code does, how it works, and any important details:`;
     stream?: boolean;
     options?: any;
   }, timeoutMs: number): Promise<OllamaGenerateResponse> {
+    // Check if Cloud API is configured
+    const cloudSettings = cloudSettingsStorage.getStore();
+    const apiKey = cloudSettings?.apiKey || process.env.CLOUD_API_KEY || process.env.OPENAI_API_KEY;
+    const isLocal = params.model ? await this.isLocalModel(params.model) : false;
+    if (apiKey && !isLocal) {
+      const activeSettings: CloudSettings = {
+        apiKey,
+        baseUrl: cloudSettings?.baseUrl || process.env.CLOUD_BASE_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1',
+        model: cloudSettings?.model || process.env.CLOUD_MODEL || process.env.OPENAI_MODEL_NAME || 'gpt-4o'
+      };
+      const responseText = await this.callCloudAPI(params.prompt, params.model, false, activeSettings);
+      return { response: responseText };
+    }
+
     // Extended timeout for large code generation
     const boundedTimeout = Math.min(Math.max(timeoutMs, 30000), 600000); // 30s min, 10min max
     
     let res: Response;
     try {
-      console.log(`[OllamaProvider] Making request to: ${this.validatedHost}/api/generate`);
+      const label = this.agentLabel ? `:${this.agentLabel}` : '';
+      console.log(`[OllamaProvider${label}] Making request to: ${this.validatedHost}/api/generate`);
       res = await fetchWithTimeout(
         `${this.validatedHost}/api/generate`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: ollamaHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             ...params,
             // Enhanced options for large code generation
@@ -729,14 +934,15 @@ Provide only the completion text that should be inserted at the cursor position:
   private buildAnalysisPrompt(request: CodeAnalysisRequest): string {
     const { code, language, analysisType } = request;
     
-    const prompts = {
-      explanation: `You are a helpful coding assistant. Explain what the following ${language} code does in a clear, conversational way without using markdown symbols or special formatting:`,
-      refactoring: `You are a helpful coding assistant. Suggest refactoring improvements for the following ${language} code in a clear, conversational way:`,
-      optimization: `You are a helpful coding assistant. Suggest performance optimizations for the following ${language} code in a clear, conversational way:`,
-      bugs: `You are a helpful coding assistant. Identify potential bugs and issues in the following ${language} code in a clear, conversational way:`,
-    };
+    const prompts = new Map<string, string>([
+      ['explanation', `You are a helpful coding assistant. Explain what the following ${language} code does in a clear, conversational way without using markdown symbols or special formatting:`],
+      ['refactoring', `You are a helpful coding assistant. Suggest refactoring improvements for the following ${language} code in a clear, conversational way:`],
+      ['optimization', `You are a helpful coding assistant. Suggest performance optimizations for the following ${language} code in a clear, conversational way:`],
+      ['bugs', `You are a helpful coding assistant. Identify potential bugs and issues in the following ${language} code in a clear, conversational way:`]
+    ]);
 
-    return `${prompts[analysisType]}
+    const promptText = prompts.get(analysisType) || prompts.get('explanation')!;
+    return `${promptText}
 
 ${code}
 
@@ -948,8 +1154,8 @@ Format as JSON with fields: projectName, description, plan (array of {step, task
   }
 
   private async generateFileContent(fileName: string, task: string, projectName: string): Promise<string> {
-    const templates: Record<string, string> = {
-      'package.json': JSON.stringify({
+    const templates = new Map<string, string>([
+      ['package.json', JSON.stringify({
         name: projectName,
         version: '1.0.0',
         description: `${projectName} application`,
@@ -968,9 +1174,9 @@ Format as JSON with fields: projectName, description, plan (array of {step, task
           '@types/node': '^20.0.0',
           '@types/express': '^4.17.0'
         }
-      }, null, 2),
+      }, null, 2)],
       
-      'tsconfig.json': JSON.stringify({
+      ['tsconfig.json', JSON.stringify({
         compilerOptions: {
           target: 'ES2020',
           module: 'commonjs',
@@ -983,16 +1189,16 @@ Format as JSON with fields: projectName, description, plan (array of {step, task
         },
         include: ['src/**/*'],
         exclude: ['node_modules', 'dist']
-      }, null, 2),
+      }, null, 2)],
       
-      'README.md': `# ${projectName}\n\n${task}\n\n## Installation\n\n\`\`\`bash\nnpm install\n\`\`\`\n\n## Usage\n\n\`\`\`bash\nnpm run dev\n\`\`\``,
+      ['README.md', `# ${projectName}\n\n${task}\n\n## Installation\n\n\`\`\`bash\nnpm install\n\`\`\`\n\n## Usage\n\n\`\`\`bash\nnpm run dev\n\`\`\``],
       
-      'src/index.ts': `import express from 'express';\nimport { app } from './app';\n\nconst PORT = process.env.PORT || 3000;\n\napp.listen(PORT, () => {\n  console.log(\`Server running on port \${PORT}\`);\n});`,
+      ['src/index.ts', `import express from 'express';\nimport { app } from './app';\n\nconst PORT = process.env.PORT || 3000;\n\napp.listen(PORT, () => {\n  console.log(\`Server running on port \${PORT}\`);\n});`],
       
-      'src/app.ts': `import express from 'express';\n\nexport const app = express();\n\napp.use(express.json());\n\napp.get('/', (req, res) => {\n  res.json({ message: 'Welcome to ${projectName}!' });\n});\n\napp.get('/health', (req, res) => {\n  res.json({ status: 'OK', timestamp: new Date().toISOString() });\n});`
-    };
+      ['src/app.ts', `import express from 'express';\n\nexport const app = express();\n\napp.use(express.json());\n\napp.get('/', (req, res) => {\n  res.json({ message: 'Welcome to ${projectName}!' });\n});\n\napp.get('/health', (req, res) => {\n  res.json({ status: 'OK', timestamp: new Date().toISOString() });\n});`]
+    ]);
 
-    return templates[fileName] || `// ${fileName}\n// Generated for: ${task}\n\nexport default {};`;
+    return templates.get(fileName) || `// ${fileName}\n// Generated for: ${task}\n\nexport default {};`;
   }
 
   private buildValidationPrompt(request: ValidationRequest): string {
@@ -1165,7 +1371,7 @@ private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[
   }
 
   private extractCodeFromResponse(response: string, language: string): string {
-    const regex = new RegExp(`\`\`\`${language}?\\s*([\\s\\S]*?)\`\`\``, 'i');
+    const regex = /```(?:[a-zA-Z0-9+#-]+)?\s*([\s\S]*?)```/i;
     const match = response.match(regex);
     
     if (match && match[1]) {
@@ -1229,37 +1435,214 @@ private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[
   }
 
   async handleChatRequest(params: any): Promise<string> {
-    const prompt = params.query || params.message || 'Hello';
-    const sessionId = params.sessionId || 'default';
-    
-    // Store user message in context
-    this.storeContext(sessionId, 'user', prompt);
-    
-    // Handle identity questions directly
-    if (prompt.toLowerCase().includes('who are you')) {
-      const response = 'I am a coding assistant designed to help you with programming tasks, code analysis, debugging, and software development.';
-      this.storeContext(sessionId, 'assistant', response);
-      return response;
+    const cloudSettings = cloudSettingsStorage.getStore();
+    const apiKey = cloudSettings?.apiKey || process.env.CLOUD_API_KEY || process.env.OPENAI_API_KEY;
+    const userMessage = params.query || params.message || 'Hello';
+    const model = params.model || this.config.model;
+    const isLocal = model ? await this.isLocalModel(model) : false;
+
+    if (apiKey && !isLocal) {
+      const activeSettings: CloudSettings = {
+        apiKey,
+        baseUrl: cloudSettings?.baseUrl || process.env.CLOUD_BASE_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1',
+        model: cloudSettings?.model || process.env.CLOUD_MODEL || process.env.OPENAI_MODEL_NAME || 'gpt-4o'
+      };
+      try {
+        const rawPriorMessages: ConversationMessage[] = Array.isArray(params.messages)
+          ? params.messages
+              .filter((message: any) =>
+                (message.role === 'user' || message.role === 'assistant') &&
+                typeof message.content === 'string' &&
+                message.content.trim().length > 0
+              )
+              .map((message: any) => ({
+                role: message.role,
+                content: message.content.trim()
+              }))
+          : [];
+
+        const contextNotes: string[] = [];
+        if (params.context) {
+          const contextText = typeof params.context === 'string'
+            ? params.context
+            : JSON.stringify(params.context);
+          if (contextText && contextText !== '{}') {
+            contextNotes.push(`Context: ${contextText}`);
+          }
+        }
+        if (params.language && params.language !== 'general') {
+          contextNotes.push(`Primary language: ${params.language}`);
+        }
+
+        const systemPrompt = [
+          'You are the MCP-Ollama AI assistant, an advanced context-aware coding agent.',
+          'Answer the user directly — never narrate your internal reasoning, analysis steps, or thought process.',
+          'Do not begin responses with meta-commentary like "The user is asking..." or "I need to check...".',
+          'Respond in clear, well-formatted Markdown.',
+          'Use fenced code blocks with the correct language tag for all code snippets.',
+          'Be concise but complete — include all necessary details.',
+          'When referencing previous messages, use the supplied conversation history as the source of truth.',
+          'Do not fabricate APIs, packages, or file paths that are not evident from the context.',
+          'You are running inside a VS Code extension integrated with a Model Context Protocol (MCP) server.',
+          'You have two modes of operation: Standard Chat Mode and Agent Mode (⚡).',
+          'In Standard Chat Mode, you act as a conversational assistant to explain code and answer questions.',
+          'In Agent Mode (which the user triggers by toggling the ⚡ button), you can autonomously execute tasks using the agent_execute tool. In this mode, you can read and modify files, run bash commands, run tests, and verify the workspace.',
+          'If the user asks about your capabilities, dynamically list both your standard conversational abilities and your agentic capabilities (like file writing, command execution, and verification), clarifying that you have actual file system and tool-use access when Agent Mode is activated.',
+        ].join(' ');
+
+        const fullSystemPrompt = contextNotes.length > 0
+          ? `${systemPrompt}\n\n${contextNotes.join('\n')}`
+          : systemPrompt;
+
+        const messages = this.buildCloudMessages(rawPriorMessages, fullSystemPrompt, userMessage, activeSettings);
+
+        return await this.callCloudChatAPI(messages, activeSettings, true);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const is404 = errMsg.includes('404');
+        console.error(`Cloud API chat request failed${is404 ? ' (404 — check cloudBaseUrl and cloudModel settings)' : ''}:`, error);
+        // Fall through to local Ollama instead of surfacing the error directly
+      }
     }
-    
-    // Get conversation context
-    const context = this.getContext(sessionId);
-    const enhancedPrompt = context ? `${context}\n${prompt}` : prompt;
-    
-    // Detect if this is a code-related request
-    const isCodeRequest = this.isCodeRelatedRequest(prompt);
-    
-    let result: string;
-    if (isCodeRequest) {
-      result = await this.handleCodeRequest(enhancedPrompt, sessionId);
-    } else {
-      result = await this.generateText({ prompt: enhancedPrompt, model: this.config.model });
+
+    // Build messages array: system + prior history + current user message
+    const priorMessages: { role: string; content: string }[] = Array.isArray(params.messages)
+      ? params.messages
+          .filter((message: any) =>
+            (message.role === 'user' || message.role === 'assistant') &&
+            typeof message.content === 'string' &&
+            message.content.trim().length > 0
+          )
+          .map((message: any) => ({
+            role: message.role,
+            content: message.content.trim()
+          }))
+      : [];
+    const dedupedPriorMessages = priorMessages.filter((message, index) =>
+      !(index === priorMessages.length - 1 &&
+        message.role === 'user' &&
+        message.content.trim() === userMessage.trim())
+    );
+
+    const contextNotes: string[] = [];
+    if (params.context) {
+      const contextText = typeof params.context === 'string'
+        ? params.context
+        : JSON.stringify(params.context);
+      if (contextText && contextText !== '{}') {
+        contextNotes.push(`Context: ${contextText}`);
+      }
     }
-    
-    // Store assistant response in context
-    this.storeContext(sessionId, 'assistant', result);
-    
-    return result;
+    if (params.language && params.language !== 'general') {
+      contextNotes.push(`Primary language: ${params.language}`);
+    }
+
+    const systemPrompt = [
+      'You are the MCP-Ollama AI assistant, an advanced context-aware coding agent.',
+      'Answer the user directly — never narrate your internal reasoning, analysis steps, or thought process.',
+      'Do not begin responses with meta-commentary like "The user is asking..." or "I need to check...".',
+      'Respond in clear, well-formatted Markdown.',
+      'Use fenced code blocks with the correct language tag for all code snippets.',
+      'Be concise but complete — include all necessary details.',
+      'When referencing previous messages, use the supplied conversation history as the source of truth.',
+      'Do not fabricate APIs, packages, or file paths that are not evident from the context.',
+      'You are running inside a VS Code extension integrated with a Model Context Protocol (MCP) server.',
+      'You have two modes of operation: Standard Chat Mode and Agent Mode (⚡).',
+      'In Standard Chat Mode, you act as a conversational assistant to explain code and answer questions.',
+      'In Agent Mode (which the user triggers by toggling the ⚡ button), you can autonomously execute tasks using the agent_execute tool. In this mode, you can read and modify files, run bash commands, run tests, and verify the workspace.',
+      'If the user asks about your capabilities, dynamically list both your standard conversational abilities and your agentic capabilities (like file writing, command execution, and verification), clarifying that you have actual file system and tool-use access when Agent Mode is activated.',
+    ].join(' ');
+
+    const fullSystemPrompt = contextNotes.length > 0
+      ? `${systemPrompt}\n\n${contextNotes.join('\n')}`
+      : systemPrompt;
+
+    const messages = [
+      { role: 'system', content: fullSystemPrompt },
+      ...dedupedPriorMessages,
+      { role: 'user', content: userMessage }
+    ];
+
+    // If the requested model is not a local Ollama model (e.g. a cloud model name), use the configured default
+    const ollamaModel = isLocal ? model : this.config.model;
+
+    const totalInputChars = messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    console.log(`[OllamaProvider] handleChatRequest → model=${ollamaModel} host=${this.validatedHost} inputChars=${totalInputChars} msgCount=${messages.length}`);
+
+    try {
+      // Use streaming to avoid timeouts on large responses
+      const res = await fetchWithTimeout(
+        `${this.validatedHost}/api/chat`,
+        {
+          method: 'POST',
+          headers: ollamaHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            model: ollamaModel,
+            stream: true,
+            messages,
+            options: { temperature: 0.7, num_predict: 4096 }
+          })
+        },
+        this.calculateDynamicTimeout(userMessage, '')
+      );
+
+      if (!res.ok) {
+        let errBody = '';
+        try { errBody = await res.text(); } catch {}
+        console.error(`[OllamaProvider] chat HTTP ${res.status} model=${ollamaModel}:`, errBody);
+        throw new Error(`Ollama chat error: ${res.status} — ${errBody}`);
+      }
+
+      // Read streaming response
+      const fullText = await this.readOllamaStreamingChatResponse(res);
+      return fullText || '';
+    } catch (error) {
+      console.error('[OllamaProvider] handleChatRequest failed:', error);
+      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  /**
+   * Read a streaming /api/chat response (each line has message.content, not response).
+   */
+  private async readOllamaStreamingChatResponse(response: Pick<Response, 'body'>): Promise<string> {
+    if (!response.body) throw new Error('No response body');
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processLine = (line: string): void => {
+      if (!line.trim()) return;
+      try {
+        const data = JSON.parse(line) as any;
+        const content = data?.message?.content;
+        if (content) chunks.push(content);
+      } catch { /* skip malformed lines */ }
+    };
+
+    const appendChunk = (value: Uint8Array | Buffer | string): void => {
+      const text = typeof value === 'string' ? value : decoder.decode(value, { stream: true });
+      buffer += text;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      lines.forEach(processLine);
+    };
+
+    const webReader = (response.body as any).getReader?.();
+    if (webReader) {
+      while (true) {
+        const { done, value } = await webReader.read();
+        if (done) break;
+        appendChunk(value);
+      }
+    } else if (Symbol.asyncIterator in (response.body as any)) {
+      for await (const value of response.body as any) {
+        appendChunk(value);
+      }
+    }
+
+    if (buffer.trim()) processLine(buffer);
+    return stripThinkingBlocks(chunks.join(''));
   }
 
   /**
@@ -1297,26 +1680,40 @@ private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[
   }
 
   async handleGenericRequest(toolName: string, params: any): Promise<string> {
-    const sessionId = params.sessionId || 'default';
-    
-    // Get conversation context for better continuity
-    const context = this.getContext(sessionId);
-    
-    // Enhanced prompt with context awareness
-    const prompt = `You are a helpful AI assistant with memory of our conversation. ${context ? 'Continue our discussion naturally.' : ''} Handle this ${toolName} request: ${JSON.stringify(params, null, 2)}`;
-    
-    console.log(`[OllamaProvider] Making contextual request to Ollama for ${toolName}`);
-    console.log(`[OllamaProvider] Context length: ${context.length} chars`);
-    
-    const result = await this.generateText({ prompt, model: this.config.model });
-    
-    // Store the interaction
-    this.storeContext(sessionId, 'user', `${toolName}: ${JSON.stringify(params)}`);
-    this.storeContext(sessionId, 'assistant', result);
-    
-    console.log(`[OllamaProvider] Received contextual response: ${result.substring(0, 100)}...`);
-    
-    return result;
+    // Dispatch to dedicated tool handlers where possible for better prompts.
+    // Generic tools get a focused system+user message pair instead of raw JSON.
+    const SAFE_TOOL_NAMES = new Set([
+      'code_review', 'code_analysis', 'refactor_code', 'code_explanation',
+      'refactoring_suggestions', 'chat_assistant', 'quick_fix', 'validation',
+      'workspace_analysis', 'slash_command'
+    ]);
+
+    if (!SAFE_TOOL_NAMES.has(toolName)) {
+      // Unknown tool — return a safe default rather than leaking raw JSON
+      return `Tool "${toolName}" is not directly supported. Please use a recognised tool name.`;
+    }
+
+    const code = params.code || params.query || params.description || '';
+    const language = params.language || 'text';
+    const extra = params.aspects ? `\nFocus areas: ${(params.aspects as string[]).join(', ')}` : '';
+
+    const toolPrompts = new Map<string, string>([
+      ['code_review', `You are an expert code reviewer. Review the following ${language} code for bugs, security issues, performance, and maintainability. Format findings as a numbered list with severity labels.\n\nCode:\n\`\`\`${language}\n${code.substring(0, 15000)}\n\`\`\`${extra}`],
+      ['code_analysis', `You are a code analyst. Analyse the following ${language} code and provide a structured breakdown of: architecture, key patterns, potential issues, and improvement suggestions.\n\nCode:\n\`\`\`${language}\n${code.substring(0, 15000)}\n\`\`\``],
+      ['refactor_code', `You are a refactoring expert. Refactor the following ${language} code to improve readability, reduce duplication, and follow best practices. Return only the refactored code.\n\n\`\`\`${language}\n${code.substring(0, 10000)}\n\`\`\``],
+      ['code_explanation', `Explain what the following ${language} code does in plain English. Be concise and accurate.\n\n\`\`\`${language}\n${code.substring(0, 10000)}\n\`\`\``],
+      ['refactoring_suggestions', `List specific refactoring suggestions for the following ${language} code. Format as a numbered list.\n\n\`\`\`${language}\n${code.substring(0, 10000)}\n\`\`\``],
+      ['quick_fix', `Provide a quick fix for the following ${language} code issue. Return the corrected code only.\n\n${params.description || ''}\n\n\`\`\`${language}\n${code.substring(0, 8000)}\n\`\`\``],
+      ['validation', `Validate the following ${language} code and list any errors, warnings, or style violations.\n\n\`\`\`${language}\n${code.substring(0, 10000)}\n\`\`\``],
+      ['workspace_analysis', `Analyse the workspace at path: ${params.workspaceRoot || '(unknown)'}. Provide a high-level architecture overview based on the described file patterns.`],
+      ['chat_assistant', `${params.query || params.message || ''}`],
+      ['slash_command', `Execute the following command: ${params.command || ''}\n\nCode context:\n\`\`\`${language}\n${code.substring(0, 8000)}\n\`\`\``],
+    ]);
+
+    const prompt = toolPrompts.get(toolName)
+      ?? `Process this ${toolName} request:\n\n${code.substring(0, 10000)}`;
+
+    return await this.generateText({ prompt, model: this.getModel(params.model, 'code') });
   }
 
   async fixCode(code: string, language: string): Promise<string> {
@@ -1583,15 +1980,15 @@ private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[
     const boundaries: Array<{content: string, type: string}> = [];
     
     // Language-specific patterns
-    const patterns = {
-      typescript: [/class\s+\w+[^{]*{[^}]*}/g, /function\s+\w+[^{]*{[^}]*}/g, /interface\s+\w+[^{]*{[^}]*}/g],
-      javascript: [/class\s+\w+[^{]*{[^}]*}/g, /function\s+\w+[^{]*{[^}]*}/g],
-      python: [/class\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/g, /def\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/g],
-      java: [/class\s+\w+[^{]*{[^}]*}/g, /public\s+[^{]*{[^}]*}/g],
-      default: [/\{[^{}]*\}/g] // Generic block matching
-    };
+    const patterns = new Map<string, RegExp[]>([
+      ['typescript', [/class\s+\w+[^{]*{[^}]*}/g, /function\s+\w+[^{]*{[^}]*}/g, /interface\s+\w+[^{]*{[^}]*}/g]],
+      ['javascript', [/class\s+\w+[^{]*{[^}]*}/g, /function\s+\w+[^{]*{[^}]*}/g]],
+      ['python', [/class\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/g, /def\s+\w+[^:]*:[\s\S]*?(?=\n\S|$)/g]],
+      ['java', [/class\s+\w+[^{]*{[^}]*}/g, /public\s+[^{]*{[^}]*}/g]],
+      ['default', [/\{[^{}]*\}/g]] // Generic block matching
+    ]);
     
-    const langPatterns = patterns[language as keyof typeof patterns] || patterns.default;
+    const langPatterns = patterns.get(language) || patterns.get('default')!;
     
     for (const pattern of langPatterns) {
       const matches = code.match(pattern) || [];
@@ -1725,7 +2122,13 @@ private parseErrorFixResponse(response: any, request: ErrorFixRequest): CodeFix[
       // Use streaming for large code generation
       const enhancedPrompt = `${prompt}
 
-IMPORTANT: Generate complete, comprehensive ${language} code. Do not truncate or summarize. Provide the full implementation with all necessary components, imports, functions, and classes. Generate at least 500-2000 lines of production-ready code.`;
+IMPORTANT:
+- Generate complete, runnable ${language} code for the requested scope.
+- Do not truncate, summarize, or replace required logic with placeholders.
+- Include necessary imports, types, functions, classes, and error handling.
+- Keep the implementation as small as correctness allows.
+- Do not pad the answer with unnecessary boilerplate or arbitrary line counts.
+- Return code only unless the caller explicitly requested explanation.`;
       
       const response = await this.generateTextStreaming(enhancedPrompt, this.config.model);
       
@@ -1737,11 +2140,10 @@ The code should be comprehensive and detailed. Include:
 - All necessary imports and dependencies
 - Complete class definitions with all methods
 - Proper error handling
-- Documentation and comments
-- Example usage
-- Helper functions and utilities
+- Concise comments for non-obvious logic
+- Helper functions only when they reduce duplication or clarify behavior
 
-Generate extensive, production-ready ${language} code:`;
+Generate the complete ${language} implementation now. Return code only:`;
         
         return await this.generateTextStreaming(expandedPrompt, this.config.model);
       }
@@ -1882,16 +2284,16 @@ Generate extensive, production-ready ${language} code:`;
     const language = this.detectLanguage(request.code);
     const variableName = this.extractVariableName(request.errorMessage) || 'variable';
     
-    const fallbackFixes: Record<string, string> = {
-      'undefined_variable': this.generateVariableFix(request.code, variableName, language),
-      'import_error': this.generateImportFix(request.code, language),
-      'syntax_error': this.generateSyntaxFix(request.code, language),
-      'type_error': this.generateTypeFix(request.code, language),
-      'missing_semicolon': request.code.replace(/([^;])\n/g, '$1;\n'),
-      'bracket_mismatch': this.fixBracketMismatch(request.code)
-    };
+    const fallbackFixes = new Map<string, string>([
+      ['undefined_variable', this.generateVariableFix(request.code, variableName, language)],
+      ['import_error', this.generateImportFix(request.code, language)],
+      ['syntax_error', this.generateSyntaxFix(request.code, language)],
+      ['type_error', this.generateTypeFix(request.code, language)],
+      ['missing_semicolon', request.code.replace(/([^;])\n/g, '$1;\n')],
+      ['bracket_mismatch', this.fixBracketMismatch(request.code)]
+    ]);
 
-    const fixedCode = fallbackFixes[errorAnalysis.type] || this.applyGenericFix(request.code, language);
+    const fixedCode = fallbackFixes.get(errorAnalysis.type) || this.applyGenericFix(request.code, language);
     
     return [{
       title: `${errorAnalysis.type.replace('_', ' ')} fix`,
@@ -2002,16 +2404,16 @@ Generate extensive, production-ready ${language} code:`;
   }
 
   private calculateFixConfidence(errorType: string, code: string): number {
-    const confidenceMap: Record<string, number> = {
-      'syntax_error': 0.8,
-      'undefined_variable': 0.7,
-      'import_error': 0.6,
-      'type_error': 0.5,
-      'missing_semicolon': 0.9,
-      'bracket_mismatch': 0.8
-    };
+    const confidenceMap = new Map<string, number>([
+      ['syntax_error', 0.8],
+      ['undefined_variable', 0.7],
+      ['import_error', 0.6],
+      ['type_error', 0.5],
+      ['missing_semicolon', 0.9],
+      ['bracket_mismatch', 0.8]
+    ]);
     
-    const baseConfidence = confidenceMap[errorType] || 0.4;
+    const baseConfidence = confidenceMap.get(errorType) || 0.4;
     const codeComplexity = this.estimateBlockDepth(code);
     
     // Reduce confidence for complex code
@@ -2019,15 +2421,127 @@ Generate extensive, production-ready ${language} code:`;
   }
 
   private categorizeError(errorType: string): 'syntax' | 'logic' | 'performance' | 'security' | 'style' {
-    const categories: Record<string, 'syntax' | 'logic' | 'performance' | 'security' | 'style'> = {
-      'syntax_error': 'syntax',
-      'undefined_variable': 'syntax',
-      'import_error': 'syntax',
-      'type_error': 'syntax',
-      'missing_semicolon': 'syntax',
-      'bracket_mismatch': 'syntax'
-    };
+    const categories = new Map<string, 'syntax' | 'logic' | 'performance' | 'security' | 'style'>([
+      ['syntax_error', 'syntax'],
+      ['undefined_variable', 'syntax'],
+      ['import_error', 'syntax'],
+      ['type_error', 'syntax'],
+      ['missing_semicolon', 'syntax'],
+      ['bracket_mismatch', 'syntax']
+    ]);
     
-    return categories[errorType] || 'syntax';
+    return categories.get(errorType) || 'syntax';
+  }
+
+  private async callCloudAPI(
+    prompt: string,
+    modelName: string | undefined,
+    stream: boolean,
+    settings: CloudSettings
+  ): Promise<string> {
+    const messages = [{ role: 'user', content: prompt }];
+    return this.callCloudChatAPI(messages, settings, stream);
+  }
+
+  private async callCloudChatAPI(
+    messages: { role: string; content: string }[],
+    settings: CloudSettings,
+    stream = false
+  ): Promise<string> {
+    const apiKey = settings.apiKey;
+    const baseUrl = settings.baseUrl || 'https://api.openai.com/v1';
+    const model = settings.model || 'gpt-4o';
+
+    const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+
+    const body = {
+      model,
+      messages,
+      stream,
+      temperature: 0.3
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    };
+
+    console.log(`[CloudAPI] Making request to: ${url} (model: ${model})`);
+
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        },
+        120000
+      );
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`Cloud API error: ${response.status} ${response.statusText} - ${errText}`);
+      }
+
+      if (stream) {
+        return await this.readCloudStreamingResponse(response);
+      } else {
+        const data = await response.json() as any;
+        return data.choices?.[0]?.message?.content || '';
+      }
+    } catch (error) {
+      console.error('[CloudAPI] Request failed:', error);
+      throw error;
+    }
+  }
+
+  private async readCloudStreamingResponse(response: Response): Promise<string> {
+    if (!response.body) throw new Error('No response body');
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    for await (const chunk of response.body as any) {
+      buffer += decoder.decode(chunk as Buffer, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed === 'data: [DONE]') continue;
+        if (trimmed.startsWith('data: ')) {
+          try {
+            const parsed = JSON.parse(trimmed.slice(6));
+            // Some providers (e.g. NVIDIA sarvam-m) use message.content instead of delta.content
+            const content =
+              parsed.choices?.[0]?.delta?.content ??
+              parsed.choices?.[0]?.message?.content ??
+              '';
+            if (content) {
+              chunks.push(content);
+            }
+          } catch (e) {
+            // Ignore parse errors on partial lines
+          }
+        }
+      }
+    }
+    return chunks.join('');
+  }
+
+  private async isLocalModel(modelName?: string): Promise<boolean> {
+    if (!modelName) return false;
+    try {
+      const models = await this.getAvailableModels();
+      const cleanName = modelName.trim().toLowerCase();
+      return models.some(m => {
+        const cleanM = m.trim().toLowerCase();
+        return cleanM === cleanName || cleanM.split(':')[0] === cleanName.split(':')[0];
+      });
+    } catch {
+      return false;
+    }
   }
 }

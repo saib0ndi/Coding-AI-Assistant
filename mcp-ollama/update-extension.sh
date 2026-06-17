@@ -3,7 +3,7 @@
 echo "🔄 Updating MCP-Ollama Extension..."
 
 # Navigate to project root
-cd /home/sb57213v/Coding-AI-Assistant/mcp-ollama
+cd "$(dirname "$0")"
 
 # Build the main project
 echo "📦 Building MCP server..."
@@ -30,7 +30,8 @@ npm run package
 
 # Install the extension
 echo "🚀 Installing extension in VS Code..."
-code --install-extension smartcode-aiassist-3.6.0.vsix --force
+VERSION="$(node -p "require('./package.json').version")"
+code --install-extension "smartcode-aiassist-${VERSION}.vsix" --force
 
 echo "✅ Extension updated successfully!"
 echo "🔄 Please reload VS Code to use the updated extension."

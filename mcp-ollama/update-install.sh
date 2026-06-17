@@ -31,16 +31,17 @@ npm run compile
 
 # Package the extension
 echo "📦 Packaging extension..."
-npx vsce package --out smartcode-aiassist-2.7.3.vsix
+VERSION="$(node -p "require('./package.json').version")"
+npm run package
 
 # Install the extension
 echo "🔧 Installing VS Code extension..."
 if command -v code &> /dev/null; then
-    code --install-extension smartcode-aiassist-2.7.3.vsix --force
+    code --install-extension "smartcode-aiassist-${VERSION}.vsix" --force
     echo "✅ Extension installed successfully!"
 else
     echo "⚠️  VS Code CLI not found. Please install manually:"
-    echo "   code --install-extension smartcode-aiassist-2.7.3.vsix"
+    echo "   code --install-extension smartcode-aiassist-${VERSION}.vsix"
 fi
 
 cd "$SCRIPT_DIR"
@@ -52,8 +53,8 @@ echo ""
 echo "🎯 Next steps:"
 echo "1. Start the MCP server: npm start"
 echo "2. Open VS Code and configure settings:"
-echo "   - MCP Server URL: http://localhost:3077"
-echo "   - Ollama Host: http://10.10.110.25:11434"
+echo "   - MCP Server URL: http://localhost:${MCP_SERVER_PORT:-3078}"
+echo "   - Ollama Host: ${OLLAMA_HOST:-http://127.0.0.1:11434}"
 echo "   - Model: codellama:7b-instruct"
 echo ""
 echo "🔧 Available commands:"

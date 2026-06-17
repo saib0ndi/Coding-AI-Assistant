@@ -3,6 +3,10 @@
 # MCP-Ollama Docker Setup Script
 echo "🚀 Setting up MCP-Ollama with Docker..."
 
+MCP_SERVER_URL="${MCP_SERVER_URL:-http://localhost:8080}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+PORT="${PORT:-8080}"
+
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker not found. Installing Docker..."
@@ -22,9 +26,9 @@ echo "🚀 Starting MCP-Ollama server..."
 docker run -d \
     --name mcp-ollama-server \
     --network=host \
-    -e MCP_SERVER_URL=http://10.10.110.22:15267 \
-    -e OLLAMA_HOST=http://10.10.110.25:11434 \
-    -e PORT=8080 \
+    -e MCP_SERVER_URL="$MCP_SERVER_URL" \
+    -e OLLAMA_HOST="$OLLAMA_HOST" \
+    -e PORT="$PORT" \
     mcp-ollama
 
 # Wait for server to start
@@ -33,13 +37,13 @@ sleep 5
 
 # Test server
 echo "🧪 Testing server..."
-if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+if curl -f "http://localhost:$PORT/health" > /dev/null 2>&1; then
     echo "✅ MCP-Ollama server is running!"
-    echo "🌐 Server URL: http://10.10.110.22:15267"
+    echo "🌐 Server URL: $MCP_SERVER_URL"
     echo "📋 Available endpoints:"
-    echo "   - Health: http://10.10.110.22:15267/health"
-    echo "   - Models: http://10.10.110.22:15267/models"
-    echo "   - Generate: http://10.10.110.22:15267/generate"
+    echo "   - Health: $MCP_SERVER_URL/health"
+    echo "   - Models: $MCP_SERVER_URL/models"
+    echo "   - Generate: $MCP_SERVER_URL/generate"
     echo ""
     echo "🎯 Next steps:"
     echo "1. Install VSCode extension: cd vscode-extension && code --install-extension smartcode-aiassist-3.10.2.vsix"

@@ -11,8 +11,7 @@ export interface ASTNode {
 
 export class ASTParser {
     
-    parseDocument(document: vscode.TextDocument): ASTNode | null {
-        const text = document.getText();
+    async parseDocument(document: vscode.TextDocument): Promise<ASTNode | null> {
         const language = document.languageId;
         
         // Skip unsupported file types to prevent tracking errors
@@ -20,6 +19,95 @@ export class ASTParser {
         if (unsupportedTypes.includes(language)) {
             return null;
         }
+
+        try {
+            // Try querying VS Code's native document symbol provider
+            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                document.uri
+            );
+
+            if (symbols && symbols.length > 0) {
+                const root: ASTNode = {
+                    type: 'program',
+                    range: new vscode.Range(0, 0, document.lineCount - 1, 0),
+                    children: this.mapSymbolsToASTNode(symbols, document)
+                };
+                return root;
+            }
+        } catch (error) {
+            console.warn(`Native symbol provider failed for ${document.fileName}, falling back to regex parser:`, error);
+        }
+        
+        return this.parseDocumentFallback(document);
+    }
+
+    private mapSymbolsToASTNode(symbols: vscode.DocumentSymbol[], document: vscode.TextDocument): ASTNode[] {
+        return symbols.map(sym => {
+            let type = 'unknown';
+            switch (sym.kind) {
+                case vscode.SymbolKind.Class:
+                case vscode.SymbolKind.Interface:
+                case vscode.SymbolKind.Struct:
+                    type = 'class';
+                    break;
+                case vscode.SymbolKind.Method:
+                    type = 'method';
+                    break;
+                case vscode.SymbolKind.Function:
+                    type = 'function';
+                    break;
+                case vscode.SymbolKind.Variable:
+                case vscode.SymbolKind.Constant:
+                case vscode.SymbolKind.Field:
+                case vscode.SymbolKind.Property:
+                    type = 'variable';
+                    break;
+                case vscode.SymbolKind.Module:
+                case vscode.SymbolKind.Namespace:
+                    type = 'program';
+                    break;
+                default:
+                    type = 'unknown';
+            }
+
+            let parameters: string[] | undefined;
+            if (type === 'function' || type === 'method') {
+                parameters = this.extractParametersFromSymbol(sym, document);
+            }
+
+            return {
+                type,
+                name: sym.name,
+                range: sym.range,
+                children: this.mapSymbolsToASTNode(sym.children || [], document),
+                parameters
+            };
+        });
+    }
+
+    private extractParametersFromSymbol(sym: vscode.DocumentSymbol, document: vscode.TextDocument): string[] {
+        if (sym.detail) {
+            const match = sym.detail.match(/\(([^)]*)\)/);
+            if (match && match[1]) {
+                return match[1].split(',').map(p => p.trim().split(':')[0].split('=')[0].trim()).filter(p => p.length > 0);
+            }
+        }
+        try {
+            const startLine = document.lineAt(sym.range.start.line).text;
+            const match = startLine.match(/\(([^)]*)\)/);
+            if (match && match[1]) {
+                return match[1].split(',').map(p => p.trim().split(':')[0].split('=')[0].trim()).filter(p => p.length > 0);
+            }
+        } catch {
+            // Ignore range errors
+        }
+        return [];
+    }
+
+    private parseDocumentFallback(document: vscode.TextDocument): ASTNode | null {
+        const text = document.getText();
+        const language = document.languageId;
         
         try {
             switch (language) {

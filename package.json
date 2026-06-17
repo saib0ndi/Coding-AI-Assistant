@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.0.1",
   "workspaces": [
-    "packages/*"
+    "mcp-ollama",
+    "mcp-ollama/vscode-extension"
   ],
   "scripts": {
-    "dev:orchestrator": "pnpm -C packages/orchestrator dev",
-    "build:ext": "pnpm -C packages/vscode-ext build"
+    "build:ext": "npm --prefix mcp-ollama/vscode-extension run compile",
+    "build:server": "npm --prefix mcp-ollama run build"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

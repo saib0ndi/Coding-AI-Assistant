@@ -4,6 +4,7 @@
  */
 import { GitHubService } from './GitHubService.js';
 import { OllamaProvider } from '../providers/OllamaProvider.js';
+import { loadAppConfig } from '../config/AppConfig.js';
 
 export interface RepositoryAnalysis {
   repository: any;
@@ -26,16 +27,26 @@ export interface QuestionAnalysis {
 export class GitHubRepositoryAnalyzer {
   private static instance: GitHubRepositoryAnalyzer;
   private gitHubService: GitHubService;
-  private ollamaProvider: OllamaProvider;
+  private ollamaProvider?: OllamaProvider;
   private analysisCache = new Map<string, RepositoryAnalysis>();
 
   private constructor() {
     this.gitHubService = GitHubService.getInstance();
-    this.ollamaProvider = new OllamaProvider({ 
-      host: 'http://localhost:11434',
-      model: 'llama3.1:8b-instruct-q4_K_M',
-      timeout: 30000
-    });
+  }
+
+  private getOllamaProvider(): OllamaProvider {
+    if (!this.ollamaProvider) {
+      const appConfig = loadAppConfig();
+      this.ollamaProvider = new OllamaProvider(
+        {
+          host: appConfig.ollama.host,
+          model: appConfig.ollama.fastModel || appConfig.ollama.model,
+          timeout: appConfig.ollama.timeoutMs,
+        },
+        'github'
+      );
+    }
+    return this.ollamaProvider;
   }
 
   public static getInstance(): GitHubRepositoryAnalyzer {
@@ -43,6 +54,10 @@ export class GitHubRepositoryAnalyzer {
       GitHubRepositoryAnalyzer.instance = new GitHubRepositoryAnalyzer();
     }
     return GitHubRepositoryAnalyzer.instance;
+  }
+
+  clearAnalysisCache(): void {
+    this.analysisCache.clear();
   }
 
   /**
@@ -865,9 +880,10 @@ ${userQuestion ? `User asked: "${userQuestion}"` : ''}
 
 Provide a clear, informative explanation about what this repository does, how it's built, and its key characteristics. Keep it concise but comprehensive.`;
 
-      const explanation = await this.ollamaProvider.generateText({
+      const appConfig = loadAppConfig();
+      const explanation = await this.getOllamaProvider().generateText({
         prompt,
-        model: 'llama3.1:8b-instruct-q4_K_M'
+        model: appConfig.ollama.fastModel || appConfig.ollama.model
       });
 
       return explanation || this.generateRepoExplanation(analysis);

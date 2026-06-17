@@ -1,6 +1,6 @@
-# Amazon Q-Style Autonomous Agent Usage
+# Autonomous Agent Usage
 
-Your MCP Ollama server now includes Amazon Q Developer-style autonomous execution capabilities.
+Your MCP Ollama server includes autonomous execution capabilities with planning, validation, and self-correction.
 
 ## 🚀 Key Features
 
@@ -32,7 +32,7 @@ Your MCP Ollama server now includes Amazon Q Developer-style autonomous executio
 ```json
 {
   "autonomous_execute": {
-    "description": "Execute tasks autonomously with Amazon Q-style capabilities",
+    "description": "Execute tasks autonomously with planning and self-correction",
     "parameters": {
       "description": "What you want to accomplish",
       "context": {
@@ -152,4 +152,4 @@ DEFAULT_RISK_LEVEL=medium
 3. **Rollback**: Critical failures trigger automatic rollback
 4. **User Control**: Pause, resume, or cancel tasks anytime
 
-This autonomous agent system brings Amazon Q Developer's intelligent automation to your local development environment!
+This autonomous agent system brings intelligent automation to your local development environment!

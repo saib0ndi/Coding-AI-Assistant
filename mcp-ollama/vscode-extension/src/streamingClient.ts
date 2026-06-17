@@ -13,7 +13,7 @@ export class StreamingClient {
     ): Promise<void> {
         try {
             const config = vscode.workspace.getConfiguration('mcp-ollama');
-            const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3077';
+            const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3078';
             
             const response = await fetch(`${serverUrl}/stream/completion`, {
                 method: 'POST',
@@ -53,16 +53,23 @@ export class StreamingClient {
         context: any,
         onToken: (token: string) => void,
         onComplete: (fullText: string) => void,
-        onError: (error: Error) => void
+        onError: (error: Error) => void,
+        options?: { model?: string; messages?: Array<{ role: string; content: string }>; language?: string }
     ): Promise<void> {
         try {
             const config = vscode.workspace.getConfiguration('mcp-ollama');
-            const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3077';
+            const serverUrl = config.get<string>('serverUrl') || 'http://localhost:3078';
             
             const response = await fetch(`${serverUrl}/stream/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message, context })
+                body: JSON.stringify({
+                    message,
+                    context,
+                    model: options?.model,
+                    messages: options?.messages,
+                    language: options?.language
+                })
             });
 
             if (!response.ok) {

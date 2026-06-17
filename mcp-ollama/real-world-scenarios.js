@@ -8,6 +8,8 @@ import fetch from 'node-fetch';
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 
+const SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${process.env.MCP_SERVER_PORT || 3078}`;
+
 class RealWorldScenarios {
   constructor() {
     this.serverProcess = null;
@@ -41,7 +43,7 @@ class RealWorldScenarios {
     console.log('User: "I want to create a React todo app"');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/ai_project_planner', {
+      const response = await fetch(`${SERVER_URL}/tools/ai_project_planner`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -82,7 +84,7 @@ function calculateTotal(items {
 }`;
 
     try {
-      const response = await fetch('http://localhost:3077/tools/auto_error_fix', {
+      const response = await fetch(`${SERVER_URL}/tools/auto_error_fix`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -117,7 +119,7 @@ function formatCurrency(amount, currency = 'USD') {
 }`;
 
     try {
-      const response = await fetch('http://localhost:3077/tools/generate_tests', {
+      const response = await fetch(`${SERVER_URL}/tools/generate_tests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,7 +161,7 @@ class UserManager {
 }`;
 
     try {
-      const response = await fetch('http://localhost:3077/tools/code_review', {
+      const response = await fetch(`${SERVER_URL}/tools/code_review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -186,7 +188,7 @@ class UserManager {
     console.log('User: "Get the main file from a GitHub repo"');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/github_smart_query', {
+      const response = await fetch(`${SERVER_URL}/tools/github_smart_query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -225,7 +227,7 @@ class UserManager {
     
     for (let i = 0; i < 10; i++) {
       try {
-        const response = await fetch('http://localhost:3077/health', { timeout: 2000 });
+        const response = await fetch(`${SERVER_URL}/health`, { timeout: 2000 });
         if (response.ok) {
           console.log('✅ Server ready for scenarios');
           return;

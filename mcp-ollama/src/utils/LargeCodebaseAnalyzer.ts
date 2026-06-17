@@ -1,35 +1,107 @@
 import { OllamaProvider } from '../providers/OllamaProvider.js';
 import { Logger } from './Logger.js';
+import { loadAppConfig } from '../config/AppConfig.js';
+
+export interface LargeCodebaseAnalyzerOptions {
+    coreArchitectureFileLimit?: number;
+    businessLogicFileLimit?: number;
+    filePreviewLimit?: number;
+    componentLimit?: number;
+    recommendationLimit?: number;
+    coreArchitectureTimeoutMs?: number;
+    businessLogicTimeoutMs?: number;
+    supportingFilesTimeoutMs?: number;
+}
+
+interface LargeCodebaseAnalyzerConfig {
+    coreArchitectureFileLimit: number;
+    businessLogicFileLimit: number;
+    filePreviewLimit: number;
+    componentLimit: number;
+    recommendationLimit: number;
+    coreArchitectureTimeoutMs: number;
+    businessLogicTimeoutMs: number;
+    supportingFilesTimeoutMs: number;
+}
+
+interface CodebaseStructure {
+    coreFiles: string[];
+    testFiles: string[];
+    configFiles: string[];
+    utilityFiles: string[];
+    totalLines: number;
+    languages: Set<string>;
+}
+
+type AnalysisPriority = 'high' | 'medium' | 'low';
+
+interface AnalysisChunk {
+    name: string;
+    files: string[];
+    priority: AnalysisPriority;
+    timeout: number;
+}
+
+interface ChunkAnalysis {
+    components: string[];
+    recommendations: string[];
+}
+
+export interface CodebaseAnalysisResult {
+    summary: string;
+    architecture: string;
+    keyComponents: string[];
+    recommendations: string[];
+    processedChunks: number;
+    totalChunks: number;
+}
 
 export class LargeCodebaseAnalyzer {
     private logger: Logger;
     private ollamaProvider: OllamaProvider;
-    private analysisCache = new Map<string, any>();
+    private analysisCache = new Map<string, CodebaseAnalysisResult>();
+    private config: LargeCodebaseAnalyzerConfig;
 
-    constructor(ollamaProvider: OllamaProvider) {
+    constructor(ollamaProvider: OllamaProvider, options: LargeCodebaseAnalyzerOptions = {}) {
         this.logger = new Logger();
         this.ollamaProvider = ollamaProvider;
+        const appConfig = loadAppConfig();
+        this.config = {
+            coreArchitectureFileLimit: options.coreArchitectureFileLimit ?? appConfig.largeCodebase.coreFileLimit,
+            businessLogicFileLimit: options.businessLogicFileLimit ?? appConfig.largeCodebase.businessFileLimit,
+            filePreviewLimit: options.filePreviewLimit ?? appConfig.largeCodebase.filePreviewLimit,
+            componentLimit: options.componentLimit ?? appConfig.largeCodebase.componentLimit,
+            recommendationLimit: options.recommendationLimit ?? appConfig.largeCodebase.recommendationLimit,
+            coreArchitectureTimeoutMs: options.coreArchitectureTimeoutMs ?? appConfig.largeCodebase.coreTimeoutMs,
+            businessLogicTimeoutMs: options.businessLogicTimeoutMs ?? appConfig.largeCodebase.businessTimeoutMs,
+            supportingFilesTimeoutMs: options.supportingFilesTimeoutMs ?? appConfig.largeCodebase.supportingTimeoutMs,
+        };
     }
 
-    async analyzeEntireCodebase(files: string[], workspacePath: string): Promise<any> {
+    async analyzeEntireCodebase(files: string[], workspacePath: string): Promise<CodebaseAnalysisResult> {
         this.logger.info(`🔍 Analyzing ${files.length} files in enterprise codebase`);
+        const cacheKey = `${workspacePath}:${files.join('|')}`;
+        const cached = this.analysisCache.get(cacheKey);
+        if (cached) return cached;
         
         // Phase 1: Quick structural analysis
         const structure = await this.analyzeCodeStructure(files);
         
         // Phase 2: Intelligent chunking by importance
-        const chunks = this.createIntelligentChunks(files, structure);
+        const chunks = this.createIntelligentChunks(structure);
         
         // Phase 3: Progressive analysis with user feedback
-        return await this.progressiveAnalysis(chunks, workspacePath);
+        const result = await this.progressiveAnalysis(chunks, workspacePath);
+        this.analysisCache.set(cacheKey, result);
+        return result;
     }
 
-    private async analyzeCodeStructure(files: string[]): Promise<any> {
-        const structure = {
-            coreFiles: [] as string[],
-            testFiles: [] as string[],
-            configFiles: [] as string[],
-            utilityFiles: [] as string[],
+    private async analyzeCodeStructure(files: string[]): Promise<CodebaseStructure> {
+        const structure: CodebaseStructure = {
+            coreFiles: [],
+            testFiles: [],
+            configFiles: [],
+            utilityFiles: [],
             totalLines: 0,
             languages: new Set<string>()
         };
@@ -52,32 +124,35 @@ export class LargeCodebaseAnalyzer {
         return structure;
     }
 
-    private createIntelligentChunks(files: string[], structure: any): any[] {
+    private createIntelligentChunks(structure: CodebaseStructure): AnalysisChunk[] {
+        const coreEnd = this.config.coreArchitectureFileLimit;
+        const businessEnd = coreEnd + this.config.businessLogicFileLimit;
+
         // Priority-based chunking for million-line codebases
         return [
             { 
                 name: 'Core Architecture', 
-                files: structure.coreFiles.slice(0, 20),
+                files: structure.coreFiles.slice(0, coreEnd),
                 priority: 'high',
-                timeout: 120000 // 2 minutes for core files
+                timeout: this.config.coreArchitectureTimeoutMs
             },
             { 
                 name: 'Business Logic', 
-                files: structure.coreFiles.slice(20, 100),
+                files: structure.coreFiles.slice(coreEnd, businessEnd),
                 priority: 'medium',
-                timeout: 60000
+                timeout: this.config.businessLogicTimeoutMs
             },
             { 
                 name: 'Supporting Files', 
                 files: [...structure.utilityFiles, ...structure.configFiles],
                 priority: 'low',
-                timeout: 30000
+                timeout: this.config.supportingFilesTimeoutMs
             }
         ];
     }
 
-    private async progressiveAnalysis(chunks: any[], workspacePath: string): Promise<any> {
-        const results = {
+    private async progressiveAnalysis(chunks: AnalysisChunk[], workspacePath: string): Promise<CodebaseAnalysisResult> {
+        const results: CodebaseAnalysisResult = {
             summary: '',
             architecture: '',
             keyComponents: [] as string[],
@@ -107,10 +182,11 @@ export class LargeCodebaseAnalyzer {
         return results;
     }
 
-    private async analyzeChunk(chunk: any, workspacePath: string): Promise<any> {
+    private async analyzeChunk(chunk: AnalysisChunk, workspacePath: string): Promise<ChunkAnalysis> {
         const prompt = `Analyze this ${chunk.name} section of a large enterprise codebase:
 
-Files: ${chunk.files.slice(0, 10).join(', ')}
+Workspace: ${workspacePath}
+Files: ${chunk.files.slice(0, this.config.filePreviewLimit).join(', ')}
 Priority: ${chunk.priority}
 
 Provide:
@@ -123,13 +199,13 @@ Focus on high-level insights for million-line codebase understanding.`;
 
         const response = await this.ollamaProvider.generateText({
             prompt,
-            model: 'deepseek-r1:70b' // Use reasoning model for architecture
+            model: this.ollamaProvider.getModel(undefined, 'code') // Use reasoning model for architecture
         });
 
         return this.parseChunkAnalysis(response);
     }
 
-    private parseChunkAnalysis(response: string): any {
+    private parseChunkAnalysis(response: string): ChunkAnalysis {
         const components = this.extractComponents(response);
         const recommendations = this.extractRecommendations(response);
         
@@ -140,7 +216,7 @@ Focus on high-level insights for million-line codebase understanding.`;
         const lines = text.split('\n');
         return lines
             .filter(line => line.includes('component') || line.includes('class') || line.includes('module'))
-            .slice(0, 5)
+            .slice(0, this.config.componentLimit)
             .map(line => line.trim());
     }
 
@@ -148,11 +224,11 @@ Focus on high-level insights for million-line codebase understanding.`;
         const lines = text.split('\n');
         return lines
             .filter(line => line.includes('recommend') || line.includes('improve') || line.includes('consider'))
-            .slice(0, 3)
+            .slice(0, this.config.recommendationLimit)
             .map(line => line.trim());
     }
 
-    private async generateComprehensiveSummary(results: any): Promise<string> {
+    private async generateComprehensiveSummary(results: CodebaseAnalysisResult): Promise<string> {
         const prompt = `Generate executive summary for enterprise codebase analysis:
 
 Processed: ${results.processedChunks}/${results.totalChunks} sections
@@ -166,7 +242,7 @@ Provide 3-paragraph executive summary focusing on:
 
         return await this.ollamaProvider.generateText({
             prompt,
-            model: 'deepseek-r1:70b'
+            model: this.ollamaProvider.getModel(undefined, 'code')
         });
     }
 }

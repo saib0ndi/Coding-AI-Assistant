@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { MCPClient } from './mcpClient';
+import { resolveAgentFiles } from './resolveAgentFiles';
 
 export interface AgentCommand {
     command: string;
@@ -12,8 +13,8 @@ export class AgentCommandHandler {
     private mcpClient: MCPClient;
     private outputChannel: vscode.OutputChannel;
 
-    constructor() {
-        this.mcpClient = new MCPClient();
+    constructor(mcpClient?: MCPClient) {
+        this.mcpClient = mcpClient ?? new MCPClient();
         this.outputChannel = vscode.window.createOutputChannel('Agent Commands');
     }
 
@@ -41,16 +42,22 @@ export class AgentCommandHandler {
             description: 'Generate documentation',
             icon: '📝',
             handler: this.handleDocsCommand.bind(this)
+        },
+        {
+            command: 'suggest',
+            description: 'Get project-wide architectural and quality suggestions',
+            icon: '💡',
+            handler: this.handleSuggestCommand.bind(this)
         }
     ];
 
     parseCommand(input: string): { command: string; args: string } | null {
-        const match = input.match(/^\/(\w+)\s+(.+)$/);
+        const match = input.match(/^\/(\w+)(?:\s+(.+))?$/);
         if (!match) return null;
         
         const [, command, args] = match;
         return this.commands.find(cmd => cmd.command === command) 
-            ? { command, args } 
+            ? { command, args: args || '' } 
             : null;
     }
 
@@ -66,13 +73,19 @@ export class AgentCommandHandler {
         try {
             await this.mcpClient.connect();
             
+            const workspacePath = this.getWorkspacePath();
+            const files = await resolveAgentFiles(args, workspacePath);
+
             const task = {
                 type: 'implement',
                 description: args,
+                taskId: context?.taskId,
                 context: {
-                    workspacePath: vscode.workspace.rootPath,
+                    workspacePath,
                     language: this.detectLanguage(),
-                    files: await this.getRelevantFiles()
+                    ...(files.length > 0 ? { files } : {}),
+                    previewChanges: true,
+                    verify: true,
                 }
             };
 
@@ -86,13 +99,19 @@ export class AgentCommandHandler {
         try {
             await this.mcpClient.connect();
             
+            const workspacePath = this.getWorkspacePath();
+            const files = await resolveAgentFiles(args, workspacePath);
+
             const task = {
                 type: 'test',
                 description: args,
+                taskId: context?.taskId,
                 context: {
-                    workspacePath: vscode.workspace.rootPath,
+                    workspacePath,
                     language: this.detectLanguage(),
-                    files: await this.getRelevantFiles()
+                    ...(files.length > 0 ? { files } : {}),
+                    previewChanges: true,
+                    verify: true,
                 }
             };
 
@@ -106,13 +125,19 @@ export class AgentCommandHandler {
         try {
             await this.mcpClient.connect();
             
+            const workspacePath = this.getWorkspacePath();
+            const files = await resolveAgentFiles(args, workspacePath);
+
             const task = {
                 type: 'analyze',
                 description: args,
+                taskId: context?.taskId,
                 context: {
-                    workspacePath: vscode.workspace.rootPath,
+                    workspacePath,
                     language: this.detectLanguage(),
-                    files: await this.getRelevantFiles()
+                    ...(files.length > 0 ? { files } : {}),
+                    previewChanges: true,
+                    verify: false,
                 }
             };
 
@@ -139,17 +164,34 @@ export class AgentCommandHandler {
         }
     }
 
+    private async handleSuggestCommand(args: string, context: any): Promise<any> {
+        try {
+            await this.mcpClient.connect();
+            
+            const workspacePath = this.getWorkspacePath();
+            const response = await this.mcpClient.callTool('project_suggestions', {
+                workspacePath,
+                query: args,
+                focus: 'all'
+            });
+
+            return { summary: response.summary, success: response.success };
+        } catch (error) {
+            throw new Error(`Suggest command failed: ${error}`);
+        }
+    }
+
+    private getWorkspacePath(): string {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        return folder?.uri.fsPath ?? vscode.workspace.rootPath ?? process.cwd();
+    }
+
     private detectLanguage(): string {
         const activeEditor = vscode.window.activeTextEditor;
         if (!activeEditor) return 'typescript';
         
         const languageId = activeEditor.document.languageId;
         return languageId || 'typescript';
-    }
-
-    private async getRelevantFiles(): Promise<string[]> {
-        const files = await vscode.workspace.findFiles('**/*.{ts,js,py,java,go,rs}', '**/node_modules/**', 50);
-        return files.map(f => f.fsPath);
     }
 
     getAvailableCommands(): AgentCommand[] {

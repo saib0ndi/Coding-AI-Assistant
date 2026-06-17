@@ -33,7 +33,6 @@
 - **Suggestion Filtering** - Confidence-based ranking
 - **Telemetry** - Privacy-preserving usage analytics
 - **Enterprise Tools** - Team management and policies
-- **Copilot Labs** - Advanced features in sidebar
 - **Streaming Suggestions** - Real-time suggestion updates
 - **Context Window** - Smart file selection for context
 - **Ghost Text UI** - Visual inline completions
@@ -76,7 +75,7 @@ mcp-ollama/
 1. **Clone & Install**: `git clone && ./install.sh`
 2. **Start Server**: `npm start` (runs on port 3077)
 3. **Install Extension**: `code --install-extension smartcode-aiassist-1.0.2.vsix`
-4. **Configure**: Set server URL to `http://localhost:3077`
+4. **Configure**: Set server URL to `http://localhost:3078`
 
 ### 🎯 Key Capabilities
 - **Real-time Code Completion** with ghost text

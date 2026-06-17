@@ -3,6 +3,8 @@
 echo "🔍 Verifying SmartCode AI Assistant Installation"
 echo "=============================================="
 
+OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+
 # Check if VS Code is installed
 if command -v code &> /dev/null; then
     echo "✅ VS Code is installed"
@@ -25,15 +27,15 @@ else
 fi
 
 # Check if Ollama is running
-if curl -s http://10.10.110.25:11434/api/tags &> /dev/null; then
-    echo "✅ Ollama server is running on 10.10.110.25:11434"
+if curl -s "$OLLAMA_HOST/api/tags" &> /dev/null; then
+    echo "✅ Ollama server is running on $OLLAMA_HOST"
     
     # List available models
     echo "🤖 Available Ollama models:"
-    curl -s http://10.10.110.25:11434/api/tags | jq -r '.models[].name' 2>/dev/null || echo "   (Unable to fetch model list)"
+    curl -s "$OLLAMA_HOST/api/tags" | jq -r '.models[].name' 2>/dev/null || echo "   (Unable to fetch model list)"
 else
-    echo "⚠️  Ollama server not running on 10.10.110.25:11434"
-    echo "💡 Make sure Ollama is running on the remote server"
+    echo "⚠️  Ollama server not running on $OLLAMA_HOST"
+    echo "💡 Set OLLAMA_HOST if Ollama is running elsewhere"
 fi
 
 # Check if MCP server files exist
@@ -69,6 +71,6 @@ echo ""
 echo "⚙️  Configuration:"
 echo "• Open VS Code Settings"
 echo "• Search for 'SmartCode AI Assistant'"
-echo "• Ollama host is configured for 10.10.110.25:11434"
+echo "• Ollama host is configured for $OLLAMA_HOST"
 echo ""
 echo "🎉 Installation verification complete!"

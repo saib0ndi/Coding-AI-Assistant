@@ -18,7 +18,11 @@ interface InlineSuggestionParams {
     };
 }
 
+const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
+
 export class MCPClient {
+    static context: vscode.ExtensionContext | undefined;
+    public selectedModel: string = '';
     private baseUrl: string;
     private connected = false;
     private mcpClient?: Client;
@@ -27,7 +31,7 @@ export class MCPClient {
         const config = vscode.workspace.getConfiguration('mcp-ollama');
         const useHttps = config.get<boolean>('useHttps', false);
         const defaultHost = config.get<string>('serverHost', 'localhost');
-        const defaultPort = config.get<number>('serverPort', 3077);
+        const defaultPort = config.get<number>('serverPort', 3078);
         const defaultUrl = `${useHttps ? 'https' : 'http'}://${defaultHost}:${defaultPort}`;
         const serverUrl = config.get<string>('serverUrl') || defaultUrl;
         this.baseUrl = this.validateServerUrl(serverUrl);
@@ -36,18 +40,16 @@ export class MCPClient {
     private validateServerUrl(url: string): string {
         try {
             const parsed = new URL(url);
-            // Only allow http/https protocols
             if (!['http:', 'https:'].includes(parsed.protocol)) {
                 const config = vscode.workspace.getConfiguration('mcp-ollama');
                 const defaultHost = config.get<string>('serverHost', 'localhost');
-                const defaultPort = config.get<number>('serverPort', 3077);
+                const defaultPort = config.get<number>('serverPort', 3078);
                 return `http://${defaultHost}:${defaultPort}`;
             }
-            // Get allowed hosts from configuration
             const config = vscode.workspace.getConfiguration('mcp-ollama');
             const allowedHosts = config.get<string[]>('allowedHosts', ['localhost', '127.0.0.1', '::1']);
             const defaultHost = config.get<string>('serverHost', 'localhost');
-            const defaultPort = config.get<number>('serverPort', 3077);
+            const defaultPort = config.get<number>('serverPort', 3078);
             
             if (!allowedHosts.includes(parsed.hostname)) {
                 return `http://${defaultHost}:${defaultPort}`;
@@ -56,9 +58,43 @@ export class MCPClient {
         } catch {
             const config = vscode.workspace.getConfiguration('mcp-ollama');
             const defaultHost = config.get<string>('serverHost', 'localhost');
-            const defaultPort = config.get<number>('serverPort', 3077);
+            const defaultPort = config.get<number>('serverPort', 3078);
             return `http://${defaultHost}:${defaultPort}`;
         }
+    }
+
+    private getWorkspaceEnvValue(key: string): string | undefined {
+        const workspaceFolders = vscode.workspace.workspaceFolders || [];
+
+        for (const folder of workspaceFolders) {
+            const envPath = path.join(folder.uri.fsPath, 'mcp-ollama', '.env');
+            if (!fs.existsSync(envPath)) {
+                continue;
+            }
+
+            const contents = fs.readFileSync(envPath, 'utf8');
+            const line = contents
+                .split(/\r?\n/)
+                .find(entry => entry.trim().startsWith(`${key}=`));
+
+            if (!line) {
+                continue;
+            }
+
+            const value = line.slice(line.indexOf('=') + 1).trim();
+            return value.replace(/^['"]|['"]$/g, '');
+        }
+
+        return undefined;
+    }
+
+    private getOllamaConnectionConfig(): { host: string; authToken?: string } {
+        const config = vscode.workspace.getConfiguration('mcp-ollama');
+        const configuredHost = config.get<string>('ollamaHost') || config.get<string>('host');
+        const host = configuredHost || this.getWorkspaceEnvValue('OLLAMA_HOST') || DEFAULT_OLLAMA_HOST;
+        const authToken = config.get<string>('ollamaAuthToken') || this.getWorkspaceEnvValue('OLLAMA_AUTH_TOKEN');
+
+        return { host, authToken };
     }
 
     async connect(): Promise<void> {
@@ -94,11 +130,25 @@ export class MCPClient {
     }
 
     private async makeRequest(method: string, path: string, body?: string): Promise<{statusCode: number, statusMessage: string, body: string}> {
+        let apiKey: string | undefined;
+        try {
+            apiKey = await MCPClient.context?.secrets.get('mcp-ollama.apiKey');
+        } catch (e) {
+            apiKey = undefined;
+        }
+        const config = vscode.workspace.getConfiguration('mcp-ollama');
+        const cloudBaseUrl = config.get<string>('cloudBaseUrl', '');
+        const cloudModel = config.get<string>('cloudModel', '');
+
+        // Cloud headers are sent whenever cloud settings are configured.
+        // The server decides local vs cloud routing — no need to gate on selectedModel here.
+        const cloudConfigured = !!(cloudModel || cloudBaseUrl || apiKey);
+
         return new Promise((resolve, reject) => {
             const url = new URL(this.baseUrl + path);
             const isHttps = url.protocol === 'https:';
             const client = isHttps ? https : http;
-            
+
             const options = {
                 hostname: url.hostname,
                 port: url.port || (isHttps ? 443 : 80),
@@ -106,7 +156,12 @@ export class MCPClient {
                 method,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...(body && { 'Content-Length': Buffer.byteLength(body) })
+                    ...(body && { 'Content-Length': Buffer.byteLength(body) }),
+                    ...(cloudConfigured && apiKey && { 'x-cloud-api-key': apiKey }),
+                    ...(cloudConfigured && cloudBaseUrl && { 'x-cloud-base-url': cloudBaseUrl }),
+                    ...(cloudConfigured && cloudModel && { 'x-cloud-model': cloudModel }),
+                    // Signal the server to use its env-var key when no local key is available
+                    ...(cloudConfigured && cloudModel && !apiKey && { 'x-use-cloud-model': 'true' })
                 },
                 ...(isHttps && { agent: this.createHttpsAgent() })
             };
@@ -171,22 +226,13 @@ export class MCPClient {
     }
 
     async callTool(name: string, args: any): Promise<any> {
-        return this.callToolInternal(name, args);
-    }
-
-    private async callToolInternal(name: string, args: any): Promise<any> {
-        if (!this.connected) {
-            throw new Error('MCP client not connected');
-        }
-
         try {
-            // Use HTTP API for now since MCP SDK requires stdio transport
             const response = await this.makeRequest('POST', `/tools/${name}`, JSON.stringify(args));
-            
+
             if (response.statusCode !== 200) {
                 throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
             }
-            
+
             return JSON.parse(response.body);
         } catch (error) {
             const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
@@ -245,9 +291,6 @@ export class MCPClient {
     async explainCode(code: string, language: string): Promise<string> {
         try {
             await this.ensureConnected();
-            if (!this.connected) {
-                return 'MCP server not available. Please check server connection.';
-            }
             const result = await this.callTool('explain_code', { code, language, detail: 'detailed' });
             return typeof result === 'string' ? result : (result.explanation || 'No explanation available');
         } catch (error) {
@@ -281,6 +324,7 @@ export class MCPClient {
 
     async generateTests(code: string, language: string): Promise<string> {
         try {
+            await this.ensureConnected();
             const result = await this.callTool('generate_tests', { code, language });
             return typeof result === 'string' ? result : (result.tests || 'No tests generated');
         } catch (error) {
@@ -292,6 +336,7 @@ export class MCPClient {
 
     async generateDocs(code: string, language: string): Promise<string> {
         try {
+            await this.ensureConnected();
             const result = await this.callTool('generate_docs', { code, language, style: 'markdown' });
             return typeof result === 'string' ? result : (result.docs || result || 'No documentation generated');
         } catch (error) {
@@ -303,6 +348,7 @@ export class MCPClient {
 
     async handleSlashCommand(command: string, code: string, language: string): Promise<string> {
         try {
+            await this.ensureConnected();
             const result = await this.callTool('slash_command', { command, code, language });
             return typeof result === 'string' ? result : (result.result || 'No result');
         } catch (error) {
@@ -348,45 +394,42 @@ export class MCPClient {
         return sanitized;
     }
     
-    async executeAgentTask(params: { description: string; context: any }): Promise<any> {
+    async verifyWorkspace(workspacePath: string): Promise<any> {
+        return this.callTool('verify_workspace', { workspacePath });
+    }
+
+    async indexCodebase(workspacePath: string, force = false, filePath?: string): Promise<any> {
+        return this.callTool('index_codebase', { workspacePath, force, filePath });
+    }
+
+    async searchCodebase(query: string, workspacePath: string, limit = 8): Promise<any> {
+        return this.callTool('search_codebase', { query, workspacePath, limit });
+    }
+
+    async getIndexStatus(workspacePath: string): Promise<any> {
+        return this.callTool('index_status', { workspacePath });
+    }
+
+    async executeAgentTask(params: { description: string; context: any; type?: string; priority?: string; taskId?: string }): Promise<any> {
         try {
-            // Use the correct agent_execute endpoint
-            const response = await this.makeRequest('POST', '/tools/agent_execute', JSON.stringify({
+            await this.ensureConnected();
+            return await this.callTool('agent_execute', {
+                taskId: params.taskId,
                 description: params.description,
-                type: 'implement',
+                type: params.type || 'implement',
                 context: params.context,
-                priority: 'high'
-            }));
-            
-            if (response.statusCode === 200) {
-                return JSON.parse(response.body);
-            } else {
-                throw new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`);
-            }
+                priority: params.priority || 'high',
+            });
         } catch (error) {
             const sanitizedError = error instanceof Error ? error.message.replace(/[\r\n\t]/g, '_') : 'Unknown error';
             console.error(`Error executing agent task: ${sanitizedError}`);
-            
-            // Fallback to simple code generation if agent fails
-            try {
-                const result = await this.callTool('code_generation', {
-                    prompt: params.description,
-                    language: params.context.language || 'typescript',
-                    context: params.context
-                });
-                return {
-                    success: true,
-                    summary: `Generated code for: ${params.description}`,
-                    code: result.code,
-                    filesModified: ['generated_code.ts']
-                };
-            } catch (fallbackError) {
-                return {
-                    success: false,
-                    summary: `Failed to execute: ${params.description}`,
-                    error: sanitizedError
-                };
-            }
+            return {
+                success: false,
+                summary: `Failed to execute: ${params.description}`,
+                error: sanitizedError,
+                filesModified: [],
+                steps: [],
+            };
         }
     }
 
@@ -436,10 +479,18 @@ export class MCPClient {
         }
     }
 
-    async semanticSearch(query: string, limit: number = 5): Promise<any> {
+    async semanticSearch(query: string, limit: number = 5, workspacePath?: string): Promise<any> {
+        const root = workspacePath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (root) {
+            try {
+                return await this.searchCodebase(query, root, limit);
+            } catch {
+                // fall through to legacy tool
+            }
+        }
         try {
             return await this.callTool('enhancedSemanticSearch', {
-                query, limit
+                query, limit, workspacePath: root,
             });
         } catch (error) {
             console.error('Error in semantic search:', error);
@@ -472,8 +523,7 @@ export class MCPClient {
 
     async makeOllamaRequest(path: string): Promise<{statusCode: number, statusMessage: string, body: string}> {
         return new Promise((resolve, reject) => {
-            const config = vscode.workspace.getConfiguration('mcp-ollama');
-            const ollamaHost = config.get<string>('host') || config.get<string>('ollamaHost', 'http://10.10.110.25:11434');
+            const { host: ollamaHost, authToken } = this.getOllamaConnectionConfig();
             
             try {
                 const url = new URL(ollamaHost + path);
@@ -486,7 +536,8 @@ export class MCPClient {
                     path: url.pathname + url.search,
                     method: 'GET',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        ...(authToken && { Authorization: `Bearer ${authToken}` })
                     }
                 };
 

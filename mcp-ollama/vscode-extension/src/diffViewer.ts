@@ -1,10 +1,15 @@
 import * as vscode from 'vscode';
+import { summarizeFileChange } from './changeSummary';
 
 export interface FileDiff {
     filePath: string;
     original: string;
     modified: string;
     status: 'added' | 'modified' | 'deleted';
+    changeSummary?: string;
+    additions?: Array<{ line: number; text: string }>;
+    anchorLine?: number;
+    anchorText?: string;
 }
 
 export class DiffViewer {
@@ -174,10 +179,24 @@ export class DiffViewer {
         .line-unchanged {
             background: transparent;
         }
-        .no-changes {
-            padding: 40px;
-            text-align: center;
-            color: var(--vscode-descriptionForeground);
+        .file-summary {
+            padding: 12px 20px;
+            background: var(--vscode-textBlockQuote-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .file-summary strong {
+            color: var(--vscode-textLink-foreground);
+        }
+        .added-line-preview {
+            margin-top: 6px;
+            padding: 6px 10px;
+            background: rgba(76, 175, 80, 0.15);
+            border-left: 3px solid #4CAF50;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 12px;
+            white-space: pre-wrap;
         }
     </style>
 </head>
@@ -231,6 +250,13 @@ export class DiffViewer {
 
     private getFileDiffHTML(diff: FileDiff, index: number): string {
         const lines = this.generateDiffLines(diff.original, diff.modified);
+        const computed = summarizeFileChange(diff.filePath, diff.original, diff.modified);
+        const summaryText = diff.changeSummary ?? computed.summary;
+        const additions = diff.additions ?? computed.additions;
+        const addedPreview = additions
+            .slice(0, 3)
+            .map((a) => `<div class="added-line-preview">Line ${a.line}: ${this.escapeHtml(a.text)}</div>`)
+            .join('');
         
         return `
             <div class="file-diff">
@@ -243,6 +269,10 @@ export class DiffViewer {
                         <button class="btn accept-file" onclick="acceptFile('${diff.filePath}')">✓ Accept</button>
                         <button class="btn reject-file" onclick="rejectFile('${diff.filePath}')">✗ Reject</button>
                     </div>
+                </div>
+                <div class="file-summary">
+                    <strong>Where:</strong> ${this.escapeHtml(summaryText)}
+                    ${addedPreview}
                 </div>
                 <div class="diff-container">
                     <div class="diff-side original">

@@ -1,0 +1,238 @@
+{
+  "name": "smartcode-aiassist",
+  "displayName": "SmartCode AI Assist",
+  "description": "AI-powered coding assistant using local Ollama models via MCP",
+  "version": "3.10.12",
+  "publisher": "saibondi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saibondi/smartcode-aiassist"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mcp-ollama.showChatPanel",
+        "title": "MCP-Ollama: Open Chat"
+      },
+      {
+        "command": "mcp-ollama.explain",
+        "title": "MCP-Ollama: Explain Code"
+      },
+      {
+        "command": "mcp-ollama.fix",
+        "title": "MCP-Ollama: Fix Code"
+      },
+      {
+        "command": "mcp-ollama.tests",
+        "title": "MCP-Ollama: Generate Tests"
+      },
+      {
+        "command": "mcp-ollama.docs",
+        "title": "MCP-Ollama: Generate Docs"
+      },
+      {
+        "command": "mcp-ollama.optimizeCode",
+        "title": "MCP-Ollama: Optimize Code"
+      },
+      {
+        "command": "mcp-ollama.securityScan",
+        "title": "MCP-Ollama: Security Scan"
+      },
+      {
+        "command": "mcp-ollama.codeReview",
+        "title": "MCP-Ollama: Code Review"
+      },
+      {
+        "command": "mcp-ollama.translateCode",
+        "title": "MCP-Ollama: Translate Code"
+      },
+      {
+        "command": "mcp-ollama.analyzeAST",
+        "title": "MCP-Ollama: Analyze AST"
+      },
+      {
+        "command": "mcp-ollama.analyzeLargeCode",
+        "title": "MCP-Ollama: Analyze Large Code"
+      },
+      {
+        "command": "mcp-ollama.generateLargeCode",
+        "title": "MCP-Ollama: Generate Large Code"
+      },
+      {
+        "command": "mcp-ollama.reviewAgentChanges",
+        "title": "MCP-Ollama: Review Agent Changes"
+      },
+      {
+        "command": "mcp-ollama.executeAgentTask",
+        "title": "MCP-Ollama: Execute Agent Task"
+      },
+      {
+        "command": "mcp-ollama.toggleAgentMode",
+        "title": "MCP-Ollama: Toggle Agent Mode"
+      },
+      {
+        "command": "mcp-ollama.startServer",
+        "title": "MCP-Ollama: Start Server"
+      },
+      {
+        "command": "mcp-ollama.showLogs",
+        "title": "MCP-Ollama: Show Logs"
+      },
+      {
+        "command": "mcp-ollama.status",
+        "title": "MCP-Ollama: Show Status"
+      },
+      {
+        "command": "mcp-ollama.enable",
+        "title": "MCP-Ollama: Enable"
+      },
+      {
+        "command": "mcp-ollama.disable",
+        "title": "MCP-Ollama: Disable"
+      }
+    ],
+    "configuration": {
+      "title": "MCP-Ollama",
+      "properties": {
+        "mcp-ollama.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable the extension"
+        },
+        "mcp-ollama.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3078",
+          "description": "MCP server URL"
+        },
+        "mcp-ollama.serverHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "MCP server host"
+        },
+        "mcp-ollama.serverPort": {
+          "type": "number",
+          "default": 3078,
+          "description": "MCP server port"
+        },
+        "mcp-ollama.ollamaHost": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434",
+          "description": "Ollama server URL"
+        },
+        "mcp-ollama.ollamaAuthToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for secured Ollama endpoints"
+        },
+        "mcp-ollama.allowedHosts": {
+          "type": "array",
+          "default": [
+            "localhost",
+            "127.0.0.1",
+            "::1"
+          ],
+          "description": "Allowed MCP server hosts"
+        },
+        "mcp-ollama.useHttps": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use HTTPS for server connection"
+        },
+        "mcp-ollama.agentMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable autonomous agent mode"
+        },
+        "mcp-ollama.cloudBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "Base URL for OpenAI-compatible Cloud API"
+        },
+        "mcp-ollama.cloudModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model identifier for Cloud API"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "mcp-ollama.showChatPanel",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "mcp-ollama.explain",
+          "group": "mcp-ollama@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "mcp-ollama.fix",
+          "group": "mcp-ollama@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "mcp-ollama.tests",
+          "group": "mcp-ollama@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "mcp-ollama.docs",
+          "group": "mcp-ollama@4",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "mcp-ollama.codeReview",
+          "group": "mcp-ollama@5",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mcp-ollama-sidebar",
+          "title": "MCP-Ollama",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "mcp-ollama-sidebar": [
+        {
+          "id": "mcpOllamaWorkflow",
+          "name": "Agent Workflow"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "dev": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "^5.9.3"
+  }
+}

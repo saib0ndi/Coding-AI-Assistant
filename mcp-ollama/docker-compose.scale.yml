@@ -18,7 +18,7 @@ services:
     build: .
     environment:
       - PORT=3077
-      - OLLAMA_HOSTS=10.10.110.25:11434,10.10.110.26:11434
+      - OLLAMA_HOSTS=${OLLAMA_HOSTS:-127.0.0.1:11434}
       - INSTANCE_ID=1
     ports:
       - "3077:3077"
@@ -27,7 +27,7 @@ services:
     build: .
     environment:
       - PORT=3078
-      - OLLAMA_HOSTS=10.10.110.27:11434,10.10.110.28:11434
+      - OLLAMA_HOSTS=${OLLAMA_HOSTS:-127.0.0.1:11434}
       - INSTANCE_ID=2
     ports:
       - "3078:3078"
@@ -36,7 +36,7 @@ services:
     build: .
     environment:
       - PORT=3079
-      - OLLAMA_HOSTS=10.10.110.29:11434,10.10.110.25:11434
+      - OLLAMA_HOSTS=${OLLAMA_HOSTS:-127.0.0.1:11434}
       - INSTANCE_ID=3
     ports:
       - "3079:3079"

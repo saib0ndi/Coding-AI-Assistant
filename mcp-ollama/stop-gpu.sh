@@ -3,6 +3,12 @@
 
 echo "Stopping MCP-Ollama GPU processes..."
 
+if [ "${CONFIRM_STOP_ALL:-}" != "true" ]; then
+    echo "This script stops Ollama, MCP-related Node processes, and common MCP ports."
+    echo "Run with CONFIRM_STOP_ALL=true ./stop-gpu.sh to continue."
+    exit 1
+fi
+
 # Stop Ollama service if running
 pkill -f ollama 2>/dev/null || true
 

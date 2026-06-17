@@ -16,10 +16,39 @@ export class ScaledOllamaProvider {
   }
 
   private setupQueueProcessor() {
-    // Inject load balancer into queue
+    // Inject load balancer into queue. Two payload shapes are supported:
+    //  - { run: () => Promise<T> }  → arbitrary guarded operation (dispatch)
+    //  - legacy generate payload    → raw /api/generate via the load balancer
     (this.requestQueue as any).executeWithLoadBalancer = async (payload: any) => {
+      if (payload && typeof payload.run === 'function') {
+        return await this.runOnInstance(payload.run);
+      }
       return await this.executeRequest(payload);
     };
+  }
+
+  /**
+   * Run an arbitrary request fn through the scaling layer: the request queue
+   * provides a global concurrency gate, and the load balancer tracks
+   * per-instance active counts. If no healthy instance is available we still
+   * run the fn directly (no-throw fallback) so this can never block real
+   * traffic — the fn itself owns the actual host/timeout/retry logic.
+   *
+   * Note: no response caching is applied here. Caching mutating agent calls
+   * would risk returning stale results across an iterative fix→verify loop;
+   * the CacheLayer is reserved for explicitly idempotent reads.
+   */
+  async dispatch<T>(fn: () => Promise<T>): Promise<T> {
+    return this.requestQueue.enqueue({ run: fn }) as Promise<T>;
+  }
+
+  private async runOnInstance<T>(fn: () => Promise<T>): Promise<T> {
+    const instance = this.loadBalancer.getNextInstance();
+    if (!instance) {
+      // No instance metadata available (or all busy/unhealthy) — run directly.
+      return await fn();
+    }
+    return await this.loadBalancer.executeRequest(instance, fn);
   }
 
   async generateText(prompt: string, model: string, options?: any): Promise<string> {
@@ -85,4 +114,12 @@ export class ScaledOllamaProvider {
       }))
     };
   }
+}
+
+// Shared singleton so the agent request path (AgentOllamaRegistry), the HTTP
+// stats endpoint, and startup all observe the same queue/cache/instances.
+let scaledInstance: ScaledOllamaProvider | null = null;
+export function getScaledProvider(): ScaledOllamaProvider {
+  if (!scaledInstance) scaledInstance = new ScaledOllamaProvider();
+  return scaledInstance;
 }

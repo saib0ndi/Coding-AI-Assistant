@@ -4,134 +4,88 @@ export interface SemanticMatch {
   code: string;
   similarity: number;
   location: vscode.Location;
+  filePath?: string;
+  symbolName?: string;
 }
 
 export class SemanticProvider {
-  private codeIndex = new Map<string, string[]>();
-  private mcpClient: any;
-  
-  constructor(mcpClient?: any) {
+  private mcpClient: { indexCodebase?: (p: string, f?: boolean, fp?: string) => Promise<any>; searchCodebase?: (q: string, p: string, l?: number) => Promise<any> } | undefined;
+  private indexPromise: Promise<void> | null = null;
+
+  constructor(mcpClient?: SemanticProvider['mcpClient']) {
     this.mcpClient = mcpClient;
   }
-  
-  async indexWorkspace(): Promise<void> {
-    const files = await vscode.workspace.findFiles('**/*.{ts,js,py,java}', '**/node_modules/**');
-    
-    for (const file of files) {
+
+  private getWorkspacePath(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  async indexWorkspace(force = false): Promise<void> {
+    const workspacePath = this.getWorkspacePath();
+    if (!workspacePath || !this.mcpClient?.indexCodebase) return;
+
+    if (this.indexPromise && !force) {
+      return this.indexPromise;
+    }
+
+    this.indexPromise = (async () => {
       try {
-        const document = await vscode.workspace.openTextDocument(file);
-        const functions = this.extractFunctions(document.getText(), document.languageId);
-        this.codeIndex.set(file.toString(), functions);
+        const status = await this.mcpClient!.indexCodebase!(workspacePath, force);
+        console.log('[SemanticProvider] Index ready:', status?.chunkCount ?? 0, 'chunks');
       } catch (error) {
-        console.warn(`Failed to index ${file.toString()}:`, error);
+        console.warn('[SemanticProvider] Index failed:', error);
       }
+    })();
+
+    return this.indexPromise;
+  }
+
+  async indexFile(filePath: string): Promise<void> {
+    const workspacePath = this.getWorkspacePath();
+    if (!workspacePath || !this.mcpClient?.indexCodebase) return;
+
+    try {
+      const status = await this.mcpClient.indexCodebase(workspacePath, false, filePath);
+      console.log('[SemanticProvider] Incremental file index updated:', filePath, status?.chunkCount ?? 0, 'chunks');
+    } catch (error) {
+      console.warn('[SemanticProvider] Incremental file index failed for:', filePath, error);
     }
   }
-  
+
   async findSimilarCode(query: string, language: string): Promise<SemanticMatch[]> {
-    // Use backend semantic search if available
-    if (this.mcpClient) {
+    const workspacePath = this.getWorkspacePath();
+    if (!workspacePath) return [];
+
+    await this.indexWorkspace();
+
+    if (this.mcpClient?.searchCodebase) {
       try {
-        const result = await this.mcpClient.request('handleSemanticProvider', {
-          query, language, workspacePath: vscode.workspace.rootPath
-        });
-        return result.matches || [];
+        const result = await this.mcpClient.searchCodebase(query, workspacePath, 8);
+        const matches = Array.isArray(result?.matches) ? result.matches : [];
+        return matches.map((m: any) => this.toSemanticMatch(m, workspacePath));
       } catch (error) {
-        console.warn('Backend semantic search failed, using local search:', error);
+        console.warn('[SemanticProvider] search_codebase failed:', error);
       }
     }
-    
-    // Fallback to local search
-    const matches: SemanticMatch[] = [];
-    const queryTokens = this.tokenize(query);
-    
-    for (const [uri, functions] of this.codeIndex) {
-      for (const func of functions) {
-        const similarity = this.calculateSimilarity(queryTokens, this.tokenize(func));
-        
-        if (similarity > 0.3) {
-          matches.push({
-            code: func,
-            similarity,
-            location: new vscode.Location(vscode.Uri.parse(uri), new vscode.Range(0, 0, 0, 0))
-          });
-        }
-      }
-    }
-    
-    return matches.sort((a, b) => b.similarity - a.similarity).slice(0, 5);
+
+    return [];
   }
-  
-  private extractFunctions(code: string, language: string): string[] {
-    const functions: string[] = [];
-    const lines = code.split('\n');
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
-      if (language === 'typescript' || language === 'javascript') {
-        if (line.match(/(?:function|const|let)\s+\w+|class\s+\w+/)) {
-          const func = this.extractBlock(lines, i);
-          if (func.length > 2) functions.push(func);
-        }
-      }
-      
-      if (language === 'python') {
-        if (line.match(/def\s+\w+|class\s+\w+/)) {
-          const func = this.extractPythonBlock(lines, i);
-          if (func.length > 2) functions.push(func);
-        }
-      }
-    }
-    
-    return functions;
-  }
-  
-  private extractBlock(lines: string[], start: number): string {
-    const result = [lines[start]];
-    let braces = (lines[start].match(/{/g) || []).length - (lines[start].match(/}/g) || []).length;
-    
-    for (let i = start + 1; i < lines.length && braces > 0; i++) {
-      result.push(lines[i]);
-      braces += (lines[i].match(/{/g) || []).length - (lines[i].match(/}/g) || []).length;
-    }
-    
-    return result.join('\n');
-  }
-  
-  private extractPythonBlock(lines: string[], start: number): string {
-    const result = [lines[start]];
-    const baseIndent = lines[start].length - lines[start].trimStart().length;
-    
-    for (let i = start + 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.trim() === '') {
-        result.push(line);
-        continue;
-      }
-      
-      const indent = line.length - line.trimStart().length;
-      if (indent <= baseIndent) break;
-      result.push(line);
-    }
-    
-    return result.join('\n');
-  }
-  
-  private tokenize(code: string): string[] {
-    return code
-      .toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
-      .split(/\s+/)
-      .filter(token => token.length > 2);
-  }
-  
-  private calculateSimilarity(tokens1: string[], tokens2: string[]): number {
-    const set1 = new Set(tokens1);
-    const set2 = new Set(tokens2);
-    const intersection = new Set([...set1].filter(x => set2.has(x)));
-    const union = new Set([...set1, ...set2]);
-    
-    return intersection.size / union.size;
+
+  private toSemanticMatch(raw: any, workspaceRoot: string): SemanticMatch {
+    const filePath = raw.filePath ?? raw.metadata?.filePath ?? 'unknown';
+    const absPath = filePath.startsWith('/') ? filePath : `${workspaceRoot}/${filePath}`;
+    const startLine = Math.max(0, (raw.startLine ?? raw.metadata?.startLine ?? 1) - 1);
+    const endLine = Math.max(startLine, (raw.endLine ?? raw.metadata?.endLine ?? startLine + 1) - 1);
+
+    return {
+      code: raw.code ?? '',
+      similarity: raw.similarity ?? raw.score ?? 0,
+      filePath: absPath,
+      symbolName: raw.symbolName ?? raw.metadata?.symbolName,
+      location: new vscode.Location(
+        vscode.Uri.file(absPath),
+        new vscode.Range(startLine, 0, endLine, 0)
+      ),
+    };
   }
 }

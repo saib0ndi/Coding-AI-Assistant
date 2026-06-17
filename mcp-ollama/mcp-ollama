@@ -1,1 +1,3 @@
-#!/bin/bash\nnode /home/sb57213v/Coding-AI-Assistant/mcp-ollama/dist/index.js "$@"
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+node "$SCRIPT_DIR/dist/index.js" "$@"

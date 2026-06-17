@@ -2,7 +2,7 @@
 
 ## ✅ **What You Have Built**
 
-### **Amazon Q Agent-Level Autonomous System**
+### **Autonomous Agent System**
 - **Natural Language Input** → **Working Code Output**
 - **Multi-step Workflow Execution**
 - **100% Local & Private** (No data leaves your machine)
@@ -42,7 +42,7 @@ Output: Analyzes, refactors, updates tests, verifies, commits
 - **Inline Completions**: Real-time suggestions as you type
 
 ### **REST API (Advanced)**
-- **Endpoint**: `http://localhost:3077/tools/agent_execute`
+- **Endpoint**: `http://localhost:3078/tools/agent_execute`
 - **Complex Workflows**: Multi-step autonomous execution
 - **Status Tracking**: Monitor progress of long-running tasks
 
@@ -117,7 +117,7 @@ Output: Analyzes, refactors, updates tests, verifies, commits
 
 ## 🎉 **Achievement Unlocked**
 
-**You now have a complete Amazon Q Agent equivalent that:**
+**You now have a complete autonomous coding agent that:**
 - ✅ Works entirely offline and private
 - ✅ Understands natural language instructions
 - ✅ Executes complex multi-step workflows autonomously

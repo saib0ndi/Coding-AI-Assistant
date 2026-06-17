@@ -28,8 +28,8 @@
                                 │ HTTP/WebSocket
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                Remote Ollama Server                             │
-│              http://10.10.110.25:11434                         │
+│                Configured Ollama Server                         │
+│              http://127.0.0.1:11434                         │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
 │  │ deepseek-coder  │  │   llama3.3:70b  │  │    phi4:latest  │ │
 │  │     v2:236b     │  │   (Reasoning)   │  │   (Fast Code)   │ │
@@ -57,7 +57,7 @@
 ### 3. **Agent System** (`src/agents/`)
 - **Purpose**: Autonomous task execution
 - **Key Files**:
-  - `AutonomousAgent.ts` - Amazon Q-style autonomous execution
+  - `AutonomousAgent.ts` - Autonomous execution with planning and self-correction
   - `AgentManager.ts` - Task orchestration
   - `CodeAgent.ts` - Code-specific operations
 
@@ -66,6 +66,44 @@
 - **Key Files**:
   - `OllamaProvider.ts` - Model interaction layer
   - `ScaledOllamaProvider.ts` - Load balancing
+
+### 5. **Symbol Resolution & Codebase Interlinking Engine** (`src/indexing/`, `src/context/`)
+- **Purpose**: Deep codebase-wide understanding and cross-file reference mapping.
+- **Key Files**:
+  - `CodebaseIndexer.ts` - Orchestrates repository scanning, chunking, and embedding sync.
+  - `CodeChunker.ts` - Splits files structurally based on functions, classes, and language AST boundaries.
+  - `EnhancedContextManager.ts` - Manages the global Symbol Table and file-to-file Dependency Graph.
+  - `SymbolResolver.ts` - Recursively maps code chunk identifiers to definition targets.
+
+---
+
+## 🔍 Deep Project-Wide Understanding Pipeline
+
+The MCP-Ollama server reads, indexes, and understands complete projects by tracing code structures recursively:
+
+```mermaid
+graph TD
+    A[Workspace Load / Index Event] --> B[CodebaseIndexer scans files]
+    B --> C[CodeChunker splits files structurally into CodeChunks]
+    C --> D[Embeddings generated and saved in .coding-ai/]
+    C --> E[EnhancedContextManager builds Symbol Table & Usages Map]
+    E --> F[Dependency Graph established based on usages]
+    G[User asks coding question] --> H[Semantic search fetches relevant CodeChunks]
+    H --> I[SymbolResolver recursively finds referenced symbols]
+    I --> J[Cross-file definitions resolved and appended to prompt]
+    J --> K[LLM receives fully grounded call-graph context]
+```
+
+### Detailed Pipeline Mechanics:
+
+1. **Workspace Scanning & Structural Chunking**:
+   Files are discovered by [CodebaseIndexer](file:///mnt/nvme_disk2/User_data/sb95104v/Coding-AI-Assistant/mcp-ollama/src/indexing/CodebaseIndexer.ts) and parsed by [CodeChunker](file:///mnt/nvme_disk2/User_data/sb95104v/Coding-AI-Assistant/mcp-ollama/src/indexing/CodeChunker.ts). Rather than reading raw monolithic text blocks, files are split at logical boundaries (classes, functions, methods) to form granular, searchable chunks.
+2. **High-Dimensional Vector Embeddings**:
+   For each chunk, high-dimensional vector embeddings are generated and stored under `.coding-ai/`. This allows conceptual, natural-language semantic searches to match against the most relevant code definitions.
+3. **Symbol Table & Usages Mapping**:
+   [EnhancedContextManager](file:///mnt/nvme_disk2/User_data/sb95104v/Coding-AI-Assistant/mcp-ollama/src/context/EnhancedContextManager.ts) registers every class, function, and method in a global symbol table. It then scans the body of all chunks to record cross-file references, automatically populating usages and establishing a directed file-to-file dependency graph.
+4. **Recursive Symbol Reference Resolution**:
+   When a user query is received in the chat assistant, the top semantic match hits are fetched. [SymbolResolver](file:///mnt/nvme_disk2/User_data/sb95104v/Coding-AI-Assistant/mcp-ollama/src/indexing/SymbolResolver.ts) scans these chunks, matches external identifiers against the global symbol table, retrieves the referenced class/function definitions across different files, and appends them to the grounding context under a structural `## Cross-File Referenced Symbol Definitions` header.
 
 ## 📊 Data Flow Example
 
@@ -201,7 +239,7 @@ if (!validation.isValid) {
 ```typescript
 // Default configuration
 const config = {
-  host: "http://10.10.110.25:11434",  // Remote Ollama server
+  host: "http://127.0.0.1:11434",  // Default local Ollama server
   models: [
     "deepseek-coder-v2:236b",         // Primary coding model
     "llama3.3:70b",                   // Reasoning tasks
@@ -251,7 +289,7 @@ mcp-ollama/
 
 ## 🚀 Key Features
 
-### **Amazon Q-Style Autonomous Agents**
+### **Autonomous Agents**
 - Self-planning and execution
 - Error correction and retry logic
 - Multi-step workflow management
@@ -280,7 +318,7 @@ mcp-ollama/
 ### Environment Variables
 ```bash
 # Ollama Configuration
-OLLAMA_HOST=http://10.10.110.25:11434
+OLLAMA_HOST=http://127.0.0.1:11434
 OLLAMA_MODEL=deepseek-coder-v2:236b
 
 # Server Configuration  
@@ -297,7 +335,7 @@ REQUEST_TIMEOUT_MS=30000
 ```json
 {
   "mcp-ollama.enabled": true,
-  "mcp-ollama.host": "http://10.10.110.25:11434",
+  "mcp-ollama.host": "http://127.0.0.1:11434",
   "mcp-ollama.model": "deepseek-coder-v2:236b",
   "mcp-ollama.enableAgentCommands": true,
   "mcp-ollama.showWorkflowProgress": true
@@ -382,4 +420,4 @@ const securityScan = {
 # 5. Refactored code examples
 ```
 
-This architecture provides a comprehensive AI coding assistant that combines the autonomous capabilities of Amazon Q Developer with the user experience of GitHub Copilot, all powered by your remote Ollama infrastructure.
+This architecture provides a comprehensive AI coding assistant that combines autonomous agent capabilities with a Copilot-style user experience, all powered by your configured Ollama infrastructure.

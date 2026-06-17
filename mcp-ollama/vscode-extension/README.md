@@ -104,7 +104,7 @@
 - ⚡ **Performance Analysis** - Optimization suggestions
 
 ### **🎁 Unique Features**
-- **39+ AI Models** - vs Amazon Q's limited selection
+- **39+ AI Models** - choose the right model per task
 - **100% Offline** - Works without internet
 - **No Telemetry** - Complete privacy
 - **Open Source** - Full transparency
@@ -229,7 +229,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Transform your development workflow with the power of Amazon Q, but with complete privacy, unlimited usage, and zero cost!**
+**Transform your development workflow with an autonomous AI assistant — with complete privacy, unlimited usage, and zero cost!**
 
 ⭐ **Star us on GitHub** if you find this useful!
 

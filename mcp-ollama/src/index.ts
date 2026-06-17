@@ -1,28 +1,43 @@
 #!/usr/bin/env node
 
-import * as dotenv from 'dotenv';
-dotenv.config({ override: false });
+// MUST be the first import: loads .env before any other module initializes,
+// so import-time singletons (e.g. the shared EmbeddingService) read the
+// correct Ollama hosts. See src/env.ts for details.
+import './env.js';
+
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import { MCPServerEnhanced } from './server/MCPServerEnhanced.js';
 import { HTTPServer } from './server/HTTPServer.js';
 import { OllamaConfig, ModelConfig } from './types/index.js';
 import { Logger } from './utils/Logger.js';
+import { DEFAULT_HTTP_PORT, DEFAULT_OLLAMA_MODEL, loadAppConfig, parsePositiveInteger } from './config/AppConfig.js';
+import { getScaledProvider } from './scaling/ScaledOllamaProvider.js';
 import fetch from 'node-fetch';
 
 const logger = new Logger();
 
+function ollamaHeaders(): Record<string, string> {
+  const token = loadAppConfig().ollama.authToken;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function main() {
   try {
     // ---- Model / Ollama configuration ----
+    const appConfig = loadAppConfig();
     const parseTimeout = (value: string | undefined): number => {
-      const parsed = Number(value);
-      const defaultTimeout = Number(process.env.DEFAULT_TIMEOUT) || 120000;
-      return isNaN(parsed) || parsed <= 0 ? defaultTimeout : parsed;
+      const defaultTimeout = parsePositiveInteger(process.env.DEFAULT_TIMEOUT, appConfig.ollama.timeoutMs);
+      return parsePositiveInteger(value, defaultTimeout);
     };
     
     const parsePort = (value: string | undefined): number => {
       const parsed = Number(value);
-      const defaultPort = 3077;
+      const defaultPort = DEFAULT_HTTP_PORT;
       return isNaN(parsed) || parsed <= 0 || parsed > 65535 ? defaultPort : parsed;
     };
 
@@ -33,6 +48,7 @@ async function main() {
         const timeoutId = setTimeout(() => controller.abort(), parseTimeout(process.env.OLLAMA_TIMEOUT_MS));
         
         const response = await fetch(`${host}/api/tags`, {
+          headers: ollamaHeaders(),
           signal: controller.signal
         });
         
@@ -56,26 +72,28 @@ async function main() {
       }
     };
 
-    const ollamaHost = process.env.OLLAMA_HOST || 'http://10.10.110.25:11434';
+    const ollamaHost = appConfig.ollama.host;
     const modelConfigs = await fetchAvailableModels(ollamaHost);
 
     // Dynamic model selection based on availability and performance
     const selectOptimalModel = (models: ModelConfig[]): string => {
-      if (process.env.OLLAMA_MODEL) return process.env.OLLAMA_MODEL;
+      if (process.env.OLLAMA_MODEL) return appConfig.ollama.model;
       
       // Prefer smaller, faster models for better responsiveness
       const fastModels = models.filter(m => 
         m.name.includes('llama3.1:8b') || 
         m.name.includes('qwen2.5:14b') ||
+        m.name.includes('qwen2.5:7b') ||
         m.name.includes('deepseek-coder-v2:236b') ||
         m.name.includes('llama3.2')
       );
       
       // Prioritize by speed (smaller models first)
       const priorityOrder = [
-        'llama3.1:8b-instruct-q4_K_M',
+        DEFAULT_OLLAMA_MODEL,
         'llama3.2:latest', 
         'qwen2.5:14b-instruct-q4_K_M',
+        'qwen2.5:7b-instruct-q4_K_M',
         'deepseek-coder-v2:236b'
       ];
       
@@ -84,7 +102,7 @@ async function main() {
         if (found) return found.name;
       }
       
-      return fastModels[0]?.name || models[0]?.name || 'llama3.1:8b-instruct-q4_K_M';
+      return fastModels[0]?.name || models[0]?.name || DEFAULT_OLLAMA_MODEL;
     };
     
     const primaryModel = selectOptimalModel(modelConfigs);
@@ -92,7 +110,7 @@ async function main() {
     const config: OllamaConfig = {
       host: ollamaHost,
       model: primaryModel,
-      timeout: parseTimeout(process.env.OLLAMA_TIMEOUT_MS || process.env.COMPLETION_TIMEOUT),
+      timeout: appConfig.ollama.timeoutMs,
     };
     
     logger.info(`Found ${modelConfigs.length} models: ${modelConfigs.map(m => m.name).join(', ')}`);
@@ -106,8 +124,12 @@ async function main() {
     }
 
     // ---- Create servers ----
+    // Shared singleton — the agent request path (AgentOllamaRegistry) routes
+    // through the same instance, so /api/stats reflects real traffic.
+    const scaledProvider = getScaledProvider();
     const mcpServer = new MCPServerEnhanced(config);
-    const httpServer = new HTTPServer(config, parsePort(process.env.MCP_SERVER_PORT) || 3077);
+    const httpPort = parsePort(process.env.PORT || process.env.MCP_SERVER_PORT) || appConfig.server.port;
+    const httpServer = new HTTPServer(config, httpPort, mcpServer, scaledProvider);
 
     // ---- Graceful shutdown ----
     const graceful = async (signal: string) => {
@@ -145,13 +167,17 @@ async function main() {
       httpServer.start()
     ]);
 
+    // ---- Agent health check ----
+    const agentHealth = await mcpServer.getAgentManager().initialize();
+    if (!agentHealth.healthy) {
+      logger.warn('No agent providers are reachable — check OLLAMA_HOST and model availability');
+    }
+
     // ---- Capability banner ----
     logger.info('MCP-Ollama Server is running and ready to accept connections');
-    const protocol = process.env.USE_HTTPS === 'true' ? 'HTTPS' : 'HTTP';
-    logger.info(`${protocol} API available on port ${parsePort(process.env.MCP_SERVER_PORT)}`);
-    if (protocol === 'HTTPS') {
-      logger.info('SSL certificates should be placed in ./certs/ directory');
-    }
+    const baseUrl = httpServer.getBaseUrl();
+    logger.info(`HTTP API: ${baseUrl}`);
+    logger.info(`Example: curl -s ${baseUrl}/health | jq .port`);
     logger.info('Server capabilities:');
     logger.info('- Code Completion & Analysis');
     logger.info('- Code Generation & Explanation');

@@ -1,3 +1,5 @@
+import { currentTrace } from './Tracing.js';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /**
@@ -6,12 +8,14 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
  *  - Redacts obvious secrets in meta (token, password, authorization, apiKey, cookie)
  *  - Handles circular refs & non-serializable values
  *  - Caps message/meta lengths to keep logs bounded
+ *  - LOG_FORMAT=json emits structured JSON lines with traceId/spanId when active
  */
 export class Logger {
   private level: LogLevel;
   private context: string;
+  private static readonly jsonMode = process.env.LOG_FORMAT === 'json';
 
-  private static readonly CONTROL = /[\r\n\x00-\x1F\x7F-\x9F]/g; // strip all control chars
+  private static readonly CONTROL = /[\r\n\x00-\x1F\x7F-\x9F]/g;
   private static readonly SECRET_KEY =
     /(pass(word)?|pwd|secret|token|authorization|api[-_]?key|session|cookie|set-cookie)/i;
 
@@ -31,15 +35,12 @@ export class Logger {
 
   private scrubString(input: unknown): string {
     const s = String(input != null ? input : '');
-    // replace control chars with space, then collapse extra spaces
     return s.replace(Logger.CONTROL, ' ').replace(/\s{2,}/g, ' ').trim();
   }
 
   private createReplacer(scrub: (input: unknown) => string, seen: WeakSet<object>) {
     return (key: string, value: unknown): unknown => {
-      // redact obvious secret-bearing keys
       if (Logger.SECRET_KEY.test(key)) return '[REDACTED]';
-
       if (typeof value === 'string') return scrub(value);
       if (typeof value === 'bigint') return value.toString();
       if (value instanceof Error) {
@@ -57,29 +58,71 @@ export class Logger {
     if (meta == null) return '';
     const seen = new WeakSet<object>();
     const scrub = this.scrubString.bind(this);
-    const replacer = this.createReplacer(scrub, seen);
-
     let json: string;
     try {
-      json = JSON.stringify(meta, replacer);
+      json = JSON.stringify(meta, this.createReplacer(scrub, seen));
     } catch {
       json = '"[Unserializable]"';
     }
-
-    // ensure single-line and bounded length
     json = json.replace(Logger.CONTROL, ' ');
     if (json.length > Logger.MAX_META_LEN) json = json.slice(0, Logger.MAX_META_LEN) + '…';
     return ` ${json}`;
   }
 
-  private formatMessage(level: LogLevel, message: string, meta?: unknown): string {
+  private formatText(level: LogLevel, message: string, meta?: unknown): string {
     const timestamp = this.getTimestamp();
     const ctx = this.scrubString(this.context);
     let msg = this.scrubString(message);
     if (msg.length > Logger.MAX_MSG_LEN) msg = msg.slice(0, Logger.MAX_MSG_LEN) + '…';
     const metaString = this.stringifyMeta(meta);
-    // single line output (no CR/LF), safe for grep/ingestion
-    return `[${timestamp}] [${level.toUpperCase()}] [${ctx}] ${msg}${metaString}`;
+    const trace = currentTrace();
+    const traceStr = trace ? ` [trace=${trace.traceId} span=${trace.spanId}]` : '';
+    return `[${timestamp}] [${level.toUpperCase()}] [${ctx}]${traceStr} ${msg}${metaString}`;
+  }
+
+  private formatJson(level: LogLevel, message: string, meta?: unknown): string {
+    const seen = new WeakSet<object>();
+    const scrub = this.scrubString.bind(this);
+    let msg = this.scrubString(message);
+    if (msg.length > Logger.MAX_MSG_LEN) msg = msg.slice(0, Logger.MAX_MSG_LEN) + '…';
+    const trace = currentTrace();
+
+    const entry: Record<string, unknown> = {
+      ts: this.getTimestamp(),
+      level,
+      ctx: this.scrubString(this.context),
+      msg,
+    };
+
+    if (trace) {
+      entry.traceId = trace.traceId;
+      entry.spanId = trace.spanId;
+      if (trace.parentSpanId) entry.parentSpanId = trace.parentSpanId;
+      entry.op = trace.operation;
+    }
+
+    if (meta != null) {
+      try {
+        entry.meta = JSON.parse(JSON.stringify(meta, this.createReplacer(scrub, seen)));
+      } catch {
+        entry.meta = '[Unserializable]';
+      }
+    }
+
+    try {
+      return JSON.stringify(entry);
+    } catch {
+      return JSON.stringify({ ts: entry.ts, level, ctx: entry.ctx, msg });
+    }
+  }
+
+  private emit(level: LogLevel, message: string, meta?: unknown): void {
+    const line = Logger.jsonMode
+      ? this.formatJson(level, message, meta)
+      : this.formatText(level, message, meta);
+    if (level === 'error') console.error(line);
+    else if (level === 'warn') console.warn(line);
+    else console.log(line);
   }
 
   private timestampCache = { value: '', lastUpdate: 0 };
@@ -93,30 +136,20 @@ export class Logger {
   }
 
   debug(message: string, meta?: unknown): void {
-    if (this.shouldLog('debug')) console.log(this.formatMessage('debug', message, meta));
+    if (this.shouldLog('debug')) this.emit('debug', message, meta);
   }
   info(message: string, meta?: unknown): void {
-    if (this.shouldLog('info')) console.log(this.formatMessage('info', message, meta));
+    if (this.shouldLog('info')) this.emit('info', message, meta);
   }
   warn(message: string, meta?: unknown): void {
-    if (this.shouldLog('warn')) {
-      const sanitizedMessage = this.scrubString(message);
-      console.warn(this.formatMessage('warn', sanitizedMessage, meta));
-    }
+    if (this.shouldLog('warn')) this.emit('warn', message, meta);
   }
   error(message: string, meta?: unknown): void {
-    if (this.shouldLog('error')) {
-      const sanitizedMessage = this.scrubString(message);
-      console.error(this.formatMessage('error', sanitizedMessage, meta));
-    }
+    if (this.shouldLog('error')) this.emit('error', message, meta);
   }
 
-  setLevel(level: LogLevel): void {
-    this.level = level;
-  }
-  setContext(context: string): void {
-    this.context = this.scrubString(context);
-  }
+  setLevel(level: LogLevel): void { this.level = level; }
+  setContext(context: string): void { this.context = this.scrubString(context); }
   createChildLogger(context: string): Logger {
     return new Logger(this.level, `${this.context}:${context}`);
   }

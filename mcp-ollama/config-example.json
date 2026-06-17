@@ -1,6 +1,6 @@
 {
   "ollama": {
-    "host": "http://10.10.110.25:11434",
+    "host": "http://127.0.0.1:11434",
     "model": "llama3.1:8b",
     "timeout": 30000
   },

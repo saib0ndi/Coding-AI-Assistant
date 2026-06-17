@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Simple test without server startup
-const TEST_WORKSPACE = '/home/sb57213v/test-workspace';
+const TEST_WORKSPACE = process.env.TEST_WORKSPACE || '/tmp/mcp-ollama-test-workspace';
 
 console.log('🧪 Simple Autonomous Agent Test\n');
 

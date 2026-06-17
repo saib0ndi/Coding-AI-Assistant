@@ -45,33 +45,36 @@ export class RequestRouter {
 
     private isComplexTask(params: any): boolean {
         if (!params.description) return false;
-        
-        const complexKeywords = [
-            'create', 'implement', 'build', 'setup', 'generate tests',
-            'add authentication', 'create api', 'setup project'
-        ];
-        
+
         const description = params.description.toLowerCase();
-        return complexKeywords.some(keyword => description.includes(keyword));
+
+        // Must have both an action verb AND a code/project noun to be considered a real agent task.
+        // This prevents conversational questions containing action words from becoming agent tasks.
+        const actionVerbs = ['implement', 'build', 'setup', 'generate', 'create', 'add', 'write'];
+        const codeNouns = [
+            'api', 'endpoint', 'service', 'component', 'module', 'class', 'function',
+            'test', 'authentication', 'auth', 'database', 'schema', 'project', 'app',
+            'server', 'route', 'controller', 'middleware', 'interface', 'type'
+        ];
+
+        const hasVerb = actionVerbs.some(v => description.includes(v));
+        const hasNoun = codeNouns.some(n => description.includes(n));
+        return hasVerb && hasNoun;
     }
 
     private async handleSimpleRequest(toolName: string, params: any): Promise<string> {
         this.logger.info(`[RequestRouter] Processing simple request: ${toolName}`);
-        console.log(`[RequestRouter] Routing ${toolName} to OllamaProvider`);
         
-        // Direct AI call for simple tasks - all return strings
+        // All tool calls go through handleGenericRequest so the response
+        // is always a plain string — no unwrapping needed in MCPServer.
         switch (toolName) {
             case 'explain_code':
-                console.log(`[RequestRouter] Calling explainCode for ${params.language}`);
                 return await this.ollamaProvider.explainCode(params.code, params.language);
             case 'fix_code':
-                console.log(`[RequestRouter] Calling fixCode for ${params.language}`);
                 return await this.ollamaProvider.fixCode(params.code, params.language);
             case 'generate_tests':
-                console.log(`[RequestRouter] Calling generateTests for ${params.language}`);
                 return await this.ollamaProvider.generateTests(params.code, params.language);
             default:
-                console.log(`[RequestRouter] Calling handleGenericRequest for ${toolName}`);
                 return await this.ollamaProvider.handleGenericRequest(toolName, params);
         }
     }
@@ -111,13 +114,16 @@ export class RequestRouter {
 
     private shouldEscalateToAgent(params: any): boolean {
         if (!params.query && !params.command) return false;
-        
+
         const text = (params.query || params.command || '').toLowerCase();
+
+        // Only escalate explicit multi-step implementation requests, not conversational questions.
         const agentTriggers = [
-            'create a', 'implement', 'build me', 'setup', 'generate complete',
-            'add tests and', 'create api with', 'full implementation'
+            'implement a', 'implement the', 'build me a', 'create a working',
+            'generate complete', 'create api with', 'full implementation',
+            'setup authentication', 'add tests and'
         ];
-        
+
         return agentTriggers.some(trigger => text.includes(trigger));
     }
 

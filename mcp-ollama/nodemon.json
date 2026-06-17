@@ -1,0 +1,10 @@
+{
+  "watch": ["dist"],
+  "ext": "js",
+  "ignore": ["dist/**/*.test.js", "dist/tests/**"],
+  "delay": 1000,
+  "exec": "node dist/index.js",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

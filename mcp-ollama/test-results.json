@@ -275,7 +275,7 @@
     {
       "name": "Integration: test-semantic-integration.cjs",
       "passed": false,
-      "details": "Exit code: 1, Error: /home/sb57213v/Coding-AI-Assistant/mcp-ollama/node_modules/compromise/builds/three/compromise-three.",
+      "details": "Exit code: 1, Error: /path/to/Coding-AI-Assistant/mcp-ollama/node_modules/compromise/builds/three/compromise-three.",
       "timestamp": "2025-11-03T08:41:56.659Z"
     },
     {

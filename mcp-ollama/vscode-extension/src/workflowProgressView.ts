@@ -15,6 +15,7 @@ export class WorkflowProgressView implements vscode.TreeDataProvider<WorkflowSte
 
     private steps: WorkflowStep[] = [];
     private panel: vscode.WebviewPanel | undefined;
+    private currentTaskId: string | undefined;
 
     constructor(private context: vscode.ExtensionContext) {}
 
@@ -55,8 +56,15 @@ export class WorkflowProgressView implements vscode.TreeDataProvider<WorkflowSte
     }
 
     showProgressPanel(taskId: string, steps: WorkflowStep[]) {
+        const taskIdChanged = this.currentTaskId !== taskId;
+        this.currentTaskId = taskId;
         this.steps = steps;
         this.refresh();
+
+        if (this.panel && !taskIdChanged) {
+            this.updateProgressPanel();
+            return;
+        }
 
         if (this.panel) {
             this.panel.dispose();
@@ -193,19 +201,20 @@ export class WorkflowProgressView implements vscode.TreeDataProvider<WorkflowSte
 
     <script>
         const vscode = acquireVsCodeApi();
-        
+        let currentSteps = ${JSON.stringify(steps)};
+
         function updateProgress() {
-            const steps = ${JSON.stringify(steps)};
-            const completed = steps.filter(s => s.status === 'completed').length;
-            const total = steps.length;
+            const completed = currentSteps.filter(s => s.status === 'completed').length;
+            const total = currentSteps.length;
             const progress = total > 0 ? (completed / total) * 100 : 0;
-            
+
             document.getElementById('overallProgress').style.width = progress + '%';
         }
-        
+
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'updateSteps') {
+                currentSteps = message.steps;
                 const stepsContainer = document.getElementById('steps');
                 stepsContainer.innerHTML = message.steps.map(step => getStepHTML(step)).join('');
                 updateProgress();

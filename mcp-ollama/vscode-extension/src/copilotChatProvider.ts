@@ -1,8 +1,16 @@
 import * as vscode from 'vscode';
 import { MCPClient } from './mcpClient';
+import { AgentCommandHandler } from './agentCommands';
+import { presentAgentResult } from './agentReview';
+import * as path from 'path';
 
 export class CopilotChatProvider {
-    constructor(private mcpClient: MCPClient) {}
+    private agentCommands = new AgentCommandHandler();
+
+    constructor(
+        private mcpClient: MCPClient,
+        private context: vscode.ExtensionContext
+    ) {}
 
     async handleChatRequest(
         request: vscode.ChatRequest,
@@ -39,10 +47,20 @@ export class CopilotChatProvider {
                 language = editor.document.languageId;
             }
 
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            const workspacePath = workspaceFolder?.uri.fsPath;
+
             const result = await this.mcpClient.callTool('chat_assistant', {
                 query: message,
-                context: contextCode,
-                language: language
+                context: {
+                    code: contextCode,
+                    language: language,
+                    workspacePath: workspacePath,
+                    activeFilePath: editor ? editor.document.uri.fsPath : undefined,
+                    activeFileName: editor ? path.basename(editor.document.uri.fsPath) : undefined
+                },
+                language: language,
+                workspacePath: workspacePath
             });
             
             const response = result?.response || result || 'No response available';
@@ -58,10 +76,15 @@ export class CopilotChatProvider {
         stream: vscode.ChatResponseStream,
         token: vscode.CancellationToken
     ): Promise<void> {
-        
         const parts = message.split(' ');
-        const command = parts[0];
-        const args = parts.slice(1).join(' ');
+        const command = parts[0].toLowerCase();
+        const args = parts.slice(1).join(' ').trim();
+
+        const agentCommands = ['/dev', '/test', '/review', '/docs'];
+        if (agentCommands.includes(command)) {
+            await this.handleAgentSlashCommand(command, args, stream);
+            return;
+        }
 
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -141,13 +164,49 @@ export class CopilotChatProvider {
                     break;
 
                 default:
-                    stream.markdown(`Unknown command: ${command}\\n\\nAvailable commands:\\n- /fix - Fix code issues\\n- /explain - Explain code\\n- /tests - Generate tests\\n- /doc - Generate documentation\\n- /optimize - Optimize performance\\n- /security - Security scan\\n- /translate [language] - Translate code`);
+                    stream.markdown(`Unknown command: ${command}\n\n**Code commands** (need selection):\n- /fix · /explain · /tests · /doc · /optimize · /security · /translate\n\n**Agent commands** (edit real files with preview):\n- /dev [task] — implement or fix\n- /test [task] — generate tests\n- /review [task] — analyze code\n- /docs [task] — documentation`);
             }
 
         } catch (error) {
             const sanitizedCommand = command.replace(/[<>"'&`*_\[\]]/g, '');
             const sanitizedError = error instanceof Error ? error.message.replace(/[<>"'&`*_\[\]]/g, '') : 'Unknown error';
             stream.markdown(`Error executing ${sanitizedCommand}: ${sanitizedError}`);
+        }
+    }
+
+    private async handleAgentSlashCommand(
+        command: string,
+        args: string,
+        stream: vscode.ChatResponseStream
+    ): Promise<void> {
+        if (!args) {
+            stream.markdown(`Usage: \`${command} <task description>\`\n\nExample:\n\`${command} Add a comment above embed() in mcp-ollama/src/indexing/EmbeddingService.ts\``);
+            return;
+        }
+
+        const workspacePath =
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ??
+            vscode.workspace.rootPath ??
+            process.cwd();
+
+        const cmd = command.replace('/', '');
+        stream.progress(`Agent running /${cmd}…`);
+
+        try {
+            const result = await this.agentCommands.executeCommand(cmd, args, {
+                workspacePath,
+            });
+            const markdown = presentAgentResult(this.context, result, workspacePath);
+            stream.markdown(`## 🤖 Agent: /${cmd}\n\n${markdown}`);
+
+            stream.button({
+                command: 'mcp-ollama.reviewAgentChanges',
+                title: 'Review Agent Changes',
+            });
+        } catch (error) {
+            stream.markdown(
+                `❌ Agent /${cmd} failed: ${error instanceof Error ? error.message : String(error)}\n\nEnsure MCP server is running (\`cd mcp-ollama && npm start\`).`
+            );
         }
     }
 
@@ -257,30 +316,30 @@ export class CopilotChatProvider {
 
     private getLanguageFromExtension(filePath: string): string {
         const ext = filePath.split('.').pop()?.toLowerCase();
-        const langMap: Record<string, string> = {
-            'js': 'javascript',
-            'ts': 'typescript',
-            'py': 'python',
-            'java': 'java',
-            'cpp': 'cpp',
-            'c': 'c',
-            'cs': 'csharp',
-            'php': 'php',
-            'rb': 'ruby',
-            'go': 'go',
-            'rs': 'rust',
-            'swift': 'swift',
-            'kt': 'kotlin',
-            'scala': 'scala',
-            'sh': 'bash',
-            'yml': 'yaml',
-            'yaml': 'yaml',
-            'json': 'json',
-            'xml': 'xml',
-            'html': 'html',
-            'css': 'css',
-            'md': 'markdown'
-        };
-        return langMap[ext || ''] || 'text';
+        const langMap = new Map<string, string>([
+            ['js', 'javascript'],
+            ['ts', 'typescript'],
+            ['py', 'python'],
+            ['java', 'java'],
+            ['cpp', 'cpp'],
+            ['c', 'c'],
+            ['cs', 'csharp'],
+            ['php', 'php'],
+            ['rb', 'ruby'],
+            ['go', 'go'],
+            ['rs', 'rust'],
+            ['swift', 'swift'],
+            ['kt', 'kotlin'],
+            ['scala', 'scala'],
+            ['sh', 'bash'],
+            ['yml', 'yaml'],
+            ['yaml', 'yaml'],
+            ['json', 'json'],
+            ['xml', 'xml'],
+            ['html', 'html'],
+            ['css', 'css'],
+            ['md', 'markdown']
+        ]);
+        return langMap.get(ext || '') || 'text';
     }
 }

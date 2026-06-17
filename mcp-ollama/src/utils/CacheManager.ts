@@ -1,7 +1,8 @@
 export class CacheManager {
-  private cache = new Map<string, { value: any; expires?: number }>();
+  private cache = new Map<string, { value: unknown; expires?: number }>();
+  private static readonly MAX_SIZE = 500;
 
-  get(key: string): any {
+  get(key: string): unknown {
     const entry = this.cache.get(key);
     if (!entry) return null;
     
@@ -13,8 +14,13 @@ export class CacheManager {
     return entry.value;
   }
 
-  set(key: string, value: any, ttl?: number): void {
-    const entry: { value: any; expires?: number } = { value };
+  set(key: string, value: unknown, ttl?: number): void {
+    // Evict oldest entry when at capacity
+    if (!this.cache.has(key) && this.cache.size >= CacheManager.MAX_SIZE) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) this.cache.delete(oldestKey);
+    }
+    const entry: { value: unknown; expires?: number } = { value };
     if (ttl) {
       entry.expires = Date.now() + ttl;
     }

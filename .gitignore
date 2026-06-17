@@ -7,11 +7,17 @@ dist
 __pycache__/
 # Build artifacts
 *.tsbuildinfo
+*.tgz
+*.vsix
+*.backup
+*.egg-info/
+* copy.*
 # VSCode
 .vscode/*
 !.vscode/launch.json
 !.vscode/extensions.json
 # Env
 .env
-vscode-extension/*.vsix
 server.log
+.coding-ai/
+*.pid

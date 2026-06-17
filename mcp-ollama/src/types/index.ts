@@ -192,7 +192,7 @@ export interface ErrorPattern {
   category: string;
   confidence: number;
   commonCauses: string[];
-  solutions: string[];
+  solutions: string[]; 
 }
 
 export interface ErrorHistoryItem {

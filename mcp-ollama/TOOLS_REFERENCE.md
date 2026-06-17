@@ -961,6 +961,32 @@ Complete reference for all available tools in the MCP Ollama system with example
 }
 ```
 
+### 31. `web_search`
+**Purpose**: Search the web for up-to-date information, documentation, and answers.
+**Parameters**:
+```json
+{
+  "query": "nodejs fetch abortcontroller timeout example",
+  "provider": "duckduckgo",
+  "limit": 3
+}
+```
+**Expected Output**:
+```json
+{
+  "query": "nodejs fetch abortcontroller timeout example",
+  "provider": "duckduckgo",
+  "count": 3,
+  "results": [
+    {
+      "title": "How to use AbortController with fetch in Node.js",
+      "url": "https://example.com/abortcontroller-fetch-nodejs",
+      "snippet": "Learn how to configure AbortController to set a request timeout with fetch in Node.js applications..."
+    }
+  ]
+}
+```
+
 ## 🎯 Usage Summary
 
 ### Most Common Tools:

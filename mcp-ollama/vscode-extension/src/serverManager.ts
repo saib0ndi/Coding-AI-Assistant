@@ -1,19 +1,18 @@
 import * as vscode from 'vscode';
 import * as net from 'net';
-import { spawn, ChildProcess, exec } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
 export class ServerManager {
     private serverProcess: ChildProcess | null = null;
-    private currentPort: number = 3077;
+    private currentPort: number = 3078;
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isStarting = false;
 
-    async findAvailablePort(startPort: number = 3077): Promise<number> {
+    async findAvailablePort(startPort: number = 3078): Promise<number> {
         for (let port = startPort; port < startPort + 100; port++) {
             if (await this.isPortAvailable(port)) {
                 return port;
@@ -37,14 +36,18 @@ export class ServerManager {
         this.isStarting = true;
 
         try {
-            await this.killAllServerProcesses();
+            await this.stopTrackedServerProcess();
             this.currentPort = await this.findAvailablePort();
             
             // Try multiple possible server paths
+            const workspaceServerPath = vscode.workspace.workspaceFolders?.[0]
+                ? path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, 'mcp-ollama', 'dist', 'index.js')
+                : undefined;
             const possiblePaths = [
                 path.join(__dirname, '../../../../dist/index.js'),
                 path.join(__dirname, '../../../dist/index.js'),
-                '/home/sb57213v/Coding-AI-Assistant/mcp-ollama/dist/index.js'
+                path.join(__dirname, '..', '..', 'dist', 'index.js'),
+                ...(workspaceServerPath ? [workspaceServerPath] : [])
             ];
             
             let serverPath = possiblePaths[0];
@@ -60,12 +63,15 @@ export class ServerManager {
                 }
             }
             console.log(`Starting server with path: ${serverPath}`);
+            const config = vscode.workspace.getConfiguration('mcp-ollama');
+            const ollamaHost = config.get<string>('ollamaHost') || process.env.OLLAMA_HOST || DEFAULT_OLLAMA_HOST;
             this.serverProcess = spawn('node', [serverPath], {
+                cwd: path.resolve(path.dirname(serverPath), '..'),
                 env: { 
                     ...process.env, 
                     MCP_SERVER_PORT: this.currentPort.toString(),
                     DEFAULT_HTTP_PORT: this.currentPort.toString(),
-                    OLLAMA_HOST: 'http://10.10.110.25:11434',
+                    OLLAMA_HOST: ollamaHost,
                     NODE_ENV: 'production'
                 },
                 stdio: ['pipe', 'pipe', 'pipe'],
@@ -172,15 +178,8 @@ export class ServerManager {
         }
 
         if (this.serverProcess) {
-            this.serverProcess.kill('SIGTERM');
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            if (!this.serverProcess.killed) {
-                this.serverProcess.kill('SIGKILL');
-            }
-            this.serverProcess = null;
+            await this.stopTrackedServerProcess();
         }
-        
-        await this.killAllServerProcesses();
     }
 
     getServerUrl(): string {
@@ -191,39 +190,15 @@ export class ServerManager {
         return this.currentPort;
     }
 
-    private async killAllServerProcesses(): Promise<void> {
-        try {
-            // Kill processes on current port
-            await this.killProcessesOnPort(this.currentPort);
-            
-            // Kill any MCP server processes
-            try {
-                await execAsync('pkill -f "node.*dist/index.js" || true');
-            } catch (error) {
-                // Ignore errors - process might not exist
-            }
-            
-            // Wait for cleanup
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (error) {
-            console.warn('Error killing server processes:', error);
-        }
-    }
+    private async stopTrackedServerProcess(): Promise<void> {
+        const processToStop = this.serverProcess;
+        if (!processToStop) return;
 
-    private async killProcessesOnPort(port: number): Promise<void> {
-        try {
-            const { stdout } = await execAsync(`lsof -ti:${port}`);
-            const pids = stdout.trim().split('\n').filter(Boolean);
-            
-            for (const pid of pids) {
-                try {
-                    await execAsync(`kill -9 ${pid}`);
-                } catch (error) {
-                    // Process might already be dead
-                }
-            }
-        } catch (error) {
-            // No processes on port - this is fine
+        processToStop.kill('SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!processToStop.killed) {
+            processToStop.kill('SIGKILL');
         }
+        this.serverProcess = null;
     }
 }

@@ -68,6 +68,26 @@ export class ResponseValidator {
         return this.validatePythonSyntax(code);
       case 'json':
         return this.validateJSONSyntax(code);
+      case 'java':
+        return this.validateJavaSyntax(code);
+      case 'go':
+        return this.validateGoSyntax(code);
+      case 'rs':
+        return this.validateRustSyntax(code);
+      case 'tsx':
+      case 'jsx':
+        return this.validateJSSyntax(code);
+      case 'jsonc':
+        return this.validateJSONSyntax(code);
+      case 'css':
+        return this.validateCSSSyntax(code);
+      case 'html':
+        return this.validateHTMLSyntax(code);
+      case 'md':
+        return this.validateMDSyntax(code);
+      case 'yaml':
+      case 'yml':
+        return this.validateYAMLSyntax(code);
       default:
         return true;
     }
@@ -75,10 +95,18 @@ export class ResponseValidator {
   
   private validateJSSyntax(code: string): boolean {
     try {
-      const braces = (code.match(/{/g) || []).length - (code.match(/}/g) || []).length;
-      const parens = (code.match(/\(/g) || []).length - (code.match(/\)/g) || []).length;
-      const brackets = (code.match(/\[/g) || []).length - (code.match(/\]/g) || []).length;
-      
+      // Strip string literals and single-line comments before counting delimiters
+      const stripped = code
+        .replace(/`[^`]*`/g, '""')
+        .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+        .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+
+      const braces = (stripped.match(/{/g) || []).length - (stripped.match(/}/g) || []).length;
+      const parens = (stripped.match(/\(/g) || []).length - (stripped.match(/\)/g) || []).length;
+      const brackets = (stripped.match(/\[/g) || []).length - (stripped.match(/\]/g) || []).length;
+
       return braces === 0 && parens === 0 && brackets === 0;
     } catch {
       return false;
@@ -115,9 +143,105 @@ export class ResponseValidator {
     }
   }
   
+  private validateJavaSyntax(code: string): boolean {
+    // Simple Java syntax validation: checks for matching brackets and semicolons
+    const lines = code.split('\n');
+    let bracketCount = 0;
+    let semicolonCount = 0;
+    
+    for (const line of lines) {
+      bracketCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      semicolonCount += (line.match(/;/g) || []).length;
+    }
+    
+    return bracketCount === 0 && semicolonCount > 0;
+  }
+  
+  private validateGoSyntax(code: string): boolean {
+    // Simple Go syntax validation: checks for matching brackets and semicolons
+    const lines = code.split('\n');
+    let bracketCount = 0;
+    let semicolonCount = 0;
+    
+    for (const line of lines) {
+      bracketCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      semicolonCount += (line.match(/;/g) || []).length;
+    }
+    
+    return bracketCount === 0 && semicolonCount > 0;
+  }
+  
+  private validateRustSyntax(code: string): boolean {
+    // Simple Rust syntax validation: checks for matching brackets and semicolons
+    const lines = code.split('\n');
+    let bracketCount = 0;
+    let semicolonCount = 0;
+    
+    for (const line of lines) {
+      bracketCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      semicolonCount += (line.match(/;/g) || []).length;
+    }
+    
+    return bracketCount === 0 && semicolonCount > 0;
+  }
+  
+  private validateCSSSyntax(code: string): boolean {
+    // Simple CSS syntax validation: checks for matching brackets and semicolons
+    const lines = code.split('\n');
+    let bracketCount = 0;
+    let semicolonCount = 0;
+    
+    for (const line of lines) {
+      bracketCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      semicolonCount += (line.match(/;/g) || []).length;
+    }
+    
+    return bracketCount === 0 && semicolonCount > 0;
+  }
+  
+  private validateHTMLSyntax(code: string): boolean {
+    // Simple HTML syntax validation: checks for matching tags
+    const lines = code.split('\n');
+    let tagCount = 0;
+    
+    for (const line of lines) {
+      tagCount += (line.match(/<\/?[^>]+>/g) || []).length;
+    }
+    
+    return tagCount % 2 === 0;
+  }
+  
+  private validateMDSyntax(code: string): boolean {
+    // Simple Markdown syntax validation: checks for headers and bold text
+    const lines = code.split('\n');
+    let headerCount = 0;
+    let boldCount = 0;
+    
+    for (const line of lines) {
+      headerCount += (line.match(/^#+/g) || []).length;
+      boldCount += (line.match(/__|\*\*/g) || []).length;
+    }
+    
+    return headerCount > 0 && boldCount > 0;
+  }
+  
+  private validateYAMLSyntax(code: string): boolean {
+    // Simple YAML syntax validation: checks for colon and indentation
+    const lines = code.split('\n');
+    let colonCount = 0;
+    let indentCount = 0;
+    
+    for (const line of lines) {
+      colonCount += (line.match(/:/g) || []).length;
+      indentCount += (line.match(/^ /g) || []).length;
+    }
+    
+    return colonCount > 0 && indentCount > 0;
+  }
+  
   private isIncomplete(code: string): boolean {
-    const incompletePattterns = [
-      /\.\.\./,
+    const incompletePatterns: RegExp[] = [
+      /^\s*\.\.\.\s*$/m,
       /TODO/i,
       /FIXME/i,
       /\/\/ Implementation needed/i,
@@ -125,8 +249,8 @@ export class ResponseValidator {
       /function\s+\w+\s*\(\s*\)\s*{\s*}/,
       /def\s+\w+\s*\(\s*\):\s*pass/
     ];
-    
-    return incompletePattterns.some(pattern => pattern.test(code));
+
+    return incompletePatterns.some(pattern => pattern.test(code));
   }
   
   private hasLowQuality(code: string): boolean {

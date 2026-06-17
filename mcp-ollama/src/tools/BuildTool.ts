@@ -11,42 +11,42 @@ export class BuildTool {
     }
 
     async npmInstall(workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand('npm install', workspacePath);
+        const result = await this.fileSystemTool.executeCommand('npm', ['install'], workspacePath);
         return result.stdout;
     }
 
     async npmRun(script: string, workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand(`npm run ${script}`, workspacePath);
+        const result = await this.fileSystemTool.executeCommand('npm', ['run', script], workspacePath);
         return result.stdout;
     }
 
     async npmTest(workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand('npm test', workspacePath);
+        const result = await this.fileSystemTool.executeCommand('npm', ['test'], workspacePath);
         return result.stdout;
     }
 
     async npmBuild(workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand('npm run build', workspacePath);
+        const result = await this.fileSystemTool.executeCommand('npm', ['run', 'build'], workspacePath);
         return result.stdout;
     }
 
     async yarnInstall(workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand('yarn install', workspacePath);
+        const result = await this.fileSystemTool.executeCommand('yarn', ['install'], workspacePath);
         return result.stdout;
     }
 
     async yarnRun(script: string, workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand(`yarn ${script}`, workspacePath);
+        const result = await this.fileSystemTool.executeCommand('yarn', [script], workspacePath);
         return result.stdout;
     }
 
     async pipInstall(requirements: string, workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand(`pip install ${requirements}`, workspacePath);
+        const result = await this.fileSystemTool.executeCommand('pip', ['install', requirements], workspacePath);
         return result.stdout;
     }
 
     async pythonRun(file: string, workspacePath: string): Promise<string> {
-        const result = await this.fileSystemTool.executeCommand(`python ${file}`, workspacePath);
+        const result = await this.fileSystemTool.executeCommand('python', [file], workspacePath);
         return result.stdout;
     }
 

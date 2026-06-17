@@ -8,14 +8,8 @@ echo "📦 Step 1: Setting up Ollama cluster..."
 cat << 'EOF' > setup-ollama-cluster.sh
 #!/bin/bash
 
-# Install Ollama on multiple servers
-OLLAMA_SERVERS=(
-  "10.10.110.25"
-  "10.10.110.26" 
-  "10.10.110.27"
-  "10.10.110.28"
-  "10.10.110.29"
-)
+# Install Ollama on multiple servers. Override with comma-separated OLLAMA_SERVERS.
+IFS=',' read -r -a OLLAMA_SERVERS <<< "${OLLAMA_SERVERS:-127.0.0.1}"
 
 for server in "${OLLAMA_SERVERS[@]}"; do
   echo "Setting up Ollama on $server..."
@@ -62,7 +56,7 @@ scrape_configs:
   
   - job_name: 'ollama-cluster'
     static_configs:
-      - targets: ['10.10.110.25:11434', '10.10.110.26:11434', '10.10.110.27:11434']
+      - targets: ['127.0.0.1:11434']
 EOF
 
 # Step 5: Performance tuning

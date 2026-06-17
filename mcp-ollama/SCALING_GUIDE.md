@@ -2,11 +2,10 @@
 
 ## 🎯 Current Infrastructure Status
 
-### Available Servers
-- **Total**: 10 servers (10.10.110.21-30)
-- **Working Ollama**: 1 server (10.10.110.25)
-- **Broken Server**: 1 server (10.10.110.24 - missing model)
-- **HTTP Servers**: 8 servers (ready for deployment)
+### Example Server Pool
+- **Ollama Servers**: `ollama-a`, `ollama-b`, `ollama-c`
+- **MCP HTTP Servers**: `mcp-server-1`, `mcp-server-2`, `mcp-server-3`
+- **Default Local Ollama**: `127.0.0.1:11434`
 
 ### Current Capacity
 - **Single Server**: 35 concurrent users (100% success rate)
@@ -16,8 +15,8 @@
 
 ### Option 1: Quick Fix (70 users) - 5 minutes
 ```bash
-# Fix the broken server
-ssh 10.10.110.24
+# Prepare a second Ollama server
+ssh ollama-b
 ollama pull deepseek-coder-v2:236b
 systemctl restart ollama
 
@@ -27,9 +26,9 @@ systemctl restart ollama
 ### Option 2: Full Deployment (175 users) - 1 hour
 ```bash
 # Deploy Ollama on 3 additional servers
-for ip in 10.10.110.21 10.10.110.22 10.10.110.26; do
-  echo "Setting up $ip..."
-  ssh $ip << 'EOF'
+for host in ollama-a ollama-b ollama-c; do
+  echo "Setting up $host..."
+  ssh "$host" << 'EOF'
     curl -fsSL https://ollama.ai/install.sh | sh
     systemctl start ollama
     systemctl enable ollama
@@ -67,7 +66,7 @@ docker-compose -f docker-compose.scale.yml up -d
 ## 🔧 Implementation Steps
 
 ### Phase 1: Immediate (70 users)
-1. Fix broken server: `ssh 10.10.110.24 "ollama pull deepseek-coder-v2:236b"`
+1. Prepare another Ollama server: `ssh ollama-b "ollama pull deepseek-coder-v2:236b"`
 2. Test capacity: `node test-available-servers.js`
 3. Update load balancer config
 
@@ -96,7 +95,7 @@ node test-available-servers.js
 node test-500-users.js
 
 # Monitor performance
-curl http://localhost:3077/stats
+curl http://localhost:3078/stats
 ```
 
 ## 💡 Recommendations
@@ -121,7 +120,7 @@ curl http://localhost:3077/stats
 
 ## 🎯 Next Steps
 
-1. **Immediate**: Run `ssh 10.10.110.24 "ollama pull deepseek-coder-v2:236b"`
+1. **Immediate**: Run `ssh ollama-b "ollama pull deepseek-coder-v2:236b"`
 2. **Short-term**: Execute Option 2 deployment
 3. **Long-term**: Plan cloud scaling for 500+ users
 

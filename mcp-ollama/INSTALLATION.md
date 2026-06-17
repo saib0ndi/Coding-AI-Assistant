@@ -16,7 +16,7 @@ code --install-extension smartcode-aiassist-3.10.2.vsix
 
 ### 3. Configure Extension
 The extension is pre-configured to use our hosted Docker server at:
-- **Server URL**: `http://10.10.110.22:15267`
+- **Server URL**: `http://localhost:3078`
 - **All 12 MCP tools** are available instantly
 
 ### 4. Start Using
@@ -46,19 +46,19 @@ The extension is pre-configured to use our hosted Docker server at:
 
 ## API Endpoints
 
-All tools are accessible via REST API at `http://10.10.110.22:15267`:
+All tools are accessible via REST API at `http://localhost:3078`:
 
 ```bash
 # Health Check
-curl http://10.10.110.22:15267/health
+curl http://localhost:3078/health
 
 # Generate Code
-curl -X POST http://10.10.110.22:15267/generate-code \
+curl -X POST http://localhost:3078/generate-code \
   -H "Content-Type: application/json" \
   -d '{"description": "Create a REST API", "language": "python"}'
 
 # Code Analysis
-curl -X POST http://10.10.110.22:15267/analyze \
+curl -X POST http://localhost:3078/analyze \
   -H "Content-Type: application/json" \
   -d '{"code": "your code here", "language": "javascript"}'
 ```
@@ -86,10 +86,10 @@ OLLAMA_HOST=http://your-ollama:11434
 
 1. **Extension not working?**
    - Check VSCode settings for "mcp-ollama.serverUrl"
-   - Ensure it's set to `http://10.10.110.22:15267`
+   - Ensure it's set to `http://localhost:3078`
 
 2. **Server not responding?**
-   - Test with: `curl http://10.10.110.22:15267/health`
+   - Test with: `curl http://localhost:3078/health`
    - Check network connectivity
 
 3. **Need local server?**

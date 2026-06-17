@@ -51,14 +51,68 @@ export class EnhancedContextManager extends ContextManager {
         
         this.symbolTable.set(symbol.name, existing);
       });
-      
-      // Index in vector store
-      await this.vectorStore.indexCodebase([file]);
+    }
+
+    if (files.length > 0) {
+      await this.vectorStore.indexCodebase(files);
+    }
+  }
+
+  populateFromIndexer(chunks: any[]): void {
+    this.symbolTable.clear();
+    this.dependencyGraph.clear();
+
+    // 1. Populate all symbol definitions
+    for (const chunk of chunks) {
+      if (chunk.symbolName && chunk.symbolType && chunk.symbolType !== 'file') {
+        const existing = this.symbolTable.get(chunk.symbolName) || {
+          name: chunk.symbolName,
+          type: chunk.symbolType,
+          usages: [],
+          definition: { file: chunk.filePath, line: chunk.startLine }
+        };
+        
+        if (!existing.definition) {
+          existing.definition = { file: chunk.filePath, line: chunk.startLine };
+        }
+        this.symbolTable.set(chunk.symbolName, existing);
+      }
+    }
+
+    // 2. Scan chunk contents to populate symbol usages and build codebase-wide dependency links
+    for (const chunk of chunks) {
+      if (!chunk.content) continue;
+
+      const words = chunk.content.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\b/g) || [];
+      const uniqueWords = new Set<string>(words);
+
+      for (const word of uniqueWords) {
+        if (word === chunk.symbolName) continue; // Skip self references
+
+        const ref = this.symbolTable.get(word);
+        if (ref && ref.definition && ref.definition.file !== chunk.filePath) {
+          // Add usage location
+          if (!ref.usages.some((u: any) => u.file === chunk.filePath && u.line === chunk.startLine)) {
+            ref.usages.push({ file: chunk.filePath, line: chunk.startLine });
+          }
+
+          // Build file-to-file dependency mapping
+          const fileNode = this.dependencyGraph.get(chunk.filePath) || {
+            name: chunk.filePath,
+            dependencies: [] as string[],
+            type: 'direct' as const
+          };
+          if (!fileNode.dependencies.includes(ref.definition.file)) {
+            fileNode.dependencies.push(ref.definition.file);
+          }
+          this.dependencyGraph.set(chunk.filePath, fileNode);
+        }
+      }
     }
   }
   
-  async findSemanticMatches(query: string, limit = 5): Promise<any[]> {
-    return await this.vectorStore.search(query, limit);
+  async findSemanticMatches(query: string, limit = 5, workspacePath?: string): Promise<any[]> {
+    return await this.vectorStore.search(query, limit, workspacePath);
   }
   
   async parseNaturalLanguage(input: string, context?: any): Promise<{intent: string, target: string, confidence: number, semanticMatches: any[]}> {
@@ -66,7 +120,7 @@ export class EnhancedContextManager extends ContextManager {
     const intentResult = this.vectorStore.parseIntent(input);
     
     // Get semantic matches for context
-    const semanticMatches = await this.findSemanticMatches(input, 3);
+    const semanticMatches = await this.findSemanticMatches(input, 5, context?.workspacePath);
     
     // Add to conversation history
     this.conversationHistory.push(input);
@@ -83,14 +137,22 @@ export class EnhancedContextManager extends ContextManager {
   getConversationContext(): string[] {
     return this.conversationHistory.slice(-5);
   }
+
+  resetState(): void {
+    this.dependencyGraph.clear();
+    this.symbolTable.clear();
+    this.conversationHistory = [];
+  }
   
-  async findSimilarCode(code: string, language: string): Promise<any[]> {
-    return await this.vectorStore.findSimilar(code, language);
+  async findSimilarCode(code: string, language: string, workspacePath?: string): Promise<any[]> {
+    return await this.vectorStore.findSimilar(code, language, 5, workspacePath);
   }
   
   async enhanceWithSemanticContext(input: string, context?: any): Promise<any> {
     const nlpResult = await this.parseNaturalLanguage(input, context);
-    const similarCode = context?.code ? await this.findSimilarCode(context.code, context.language || 'typescript') : [];
+    const similarCode = context?.code
+      ? await this.findSimilarCode(context.code, context.language || 'typescript', context.workspacePath)
+      : [];
     
     return {
       ...nlpResult,

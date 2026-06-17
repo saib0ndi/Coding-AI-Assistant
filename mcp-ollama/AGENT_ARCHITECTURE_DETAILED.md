@@ -58,7 +58,7 @@ class AgentManager {
                                   │
                     ┌─────────────▼─────────────┐
                     │    Remote Ollama Server   │
-                    │  http://10.10.110.25:11434│
+                    │  http://127.0.0.1:11434│
                     └───────────────────────────┘
 ```
 
@@ -103,7 +103,7 @@ MCPServer.ts
   → imports AgentManager
   → AgentManager imports AutonomousAgent, CodeAgent, ProjectAgent
   → All agents use OllamaProvider
-  → OllamaProvider connects to remote Ollama server
+  → OllamaProvider connects to the configured Ollama server
 ```
 
 ## 🔧 **How We Built These Agents**

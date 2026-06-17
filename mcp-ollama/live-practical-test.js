@@ -8,6 +8,8 @@ import fetch from 'node-fetch';
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 
+const SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${process.env.MCP_SERVER_PORT || 3078}`;
+
 class LivePracticalTest {
   constructor() {
     this.serverProcess = null;
@@ -65,7 +67,7 @@ class LivePracticalTest {
     
     for (let i = 0; i < 10; i++) {
       try {
-        const response = await fetch('http://localhost:3077/health', { timeout: 2000 });
+        const response = await fetch(`${SERVER_URL}/health`, { timeout: 2000 });
         if (response.ok) {
           console.log('✅ Server is ready');
           return;
@@ -83,7 +85,7 @@ class LivePracticalTest {
     console.log('\n🏥 Testing Server Health...');
     
     try {
-      const response = await fetch('http://localhost:3077/health', { timeout: 5000 });
+      const response = await fetch(`${SERVER_URL}/health`, { timeout: 5000 });
       
       if (response.ok) {
         const data = await response.json();
@@ -100,7 +102,7 @@ class LivePracticalTest {
     console.log('\n⚡ Testing Code Generation...');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/code_generation', {
+      const response = await fetch(`${SERVER_URL}/tools/code_generation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -125,7 +127,7 @@ class LivePracticalTest {
     console.log('\n🤖 Testing Agent Execution...');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/agent_execute', {
+      const response = await fetch(`${SERVER_URL}/tools/agent_execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -160,7 +162,7 @@ class LivePracticalTest {
     console.log('\n🧠 Testing NLP Integration...');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/ai_project_planner', {
+      const response = await fetch(`${SERVER_URL}/tools/ai_project_planner`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -184,7 +186,7 @@ class LivePracticalTest {
     console.log('\n📂 Testing File Operations...');
     
     try {
-      const response = await fetch('http://localhost:3077/tools/file_system_operation', {
+      const response = await fetch(`${SERVER_URL}/tools/file_system_operation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

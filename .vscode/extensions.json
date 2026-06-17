@@ -5,6 +5,6 @@
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
     "humao.rest-client",
-    "undefined_publisher.mcp-ollama-assistant"
+    "saibondi.smartcode-aiassist"
   ]
 }
